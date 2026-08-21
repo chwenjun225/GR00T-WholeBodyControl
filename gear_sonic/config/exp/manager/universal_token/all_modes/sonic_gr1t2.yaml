@@ -1,0 +1,189 @@
+# @package _global_
+defaults:
+  - /algo: ppo_im_phc
+  - /manager_env: base_env
+  - /callbacks/read_eval
+  - /callbacks/im_resample
+  - /aux_losses: universal_token/g1_recon_and_all_latent
+  - override /trainer: trl_ppo_aux
+  - override /actor_critic: universal_token/all_mlp_v1
+  - override /manager_env/observations/tokenizer: unitoken_all_noz
+  - override /manager_env/observations/policy: local_dir_hist
+  - override /manager_env/observations/critic: privileged_mf_hist
+  - override /manager_env/events: tracking/level0_4
+  - override /manager_env/terminations: tracking/base_adaptive_strict_ori_foot_xyz
+  - override /manager_env/rewards: tracking/base_5point_local_feet_acc
+
+use_manager_env: true
+exp_base: ${hydra:runtime.choices.exp}
+exp_var: baseline
+experiment_name: ${exp_base}_${exp_var}
+experiment_dir: ${base_dir}/${project_name}/${experiment_name}-${timestamp}
+
+num_envs: 1
+project_name: TRL_GR1T2_Track
+actor_prop_history_length: 10
+actor_actions_history_length: 10
+critic_prop_history_length: 10
+critic_actions_history_length: 10
+
+manager_env:
+  actions:
+    joint_pos:
+      joint_names: &gr1t2_joints
+        [
+          "left_hip_roll_joint",
+          "right_hip_roll_joint",
+          "waist_yaw_joint",
+          "left_hip_yaw_joint",
+          "right_hip_yaw_joint",
+          "waist_pitch_joint",
+          "left_hip_pitch_joint",
+          "right_hip_pitch_joint",
+          "waist_roll_joint",
+          "left_knee_pitch_joint",
+          "right_knee_pitch_joint",
+          "head_roll_joint",
+          "left_shoulder_pitch_joint",
+          "right_shoulder_pitch_joint",
+          "left_ankle_pitch_joint",
+          "right_ankle_pitch_joint",
+          "head_pitch_joint",
+          "left_shoulder_roll_joint",
+          "right_shoulder_roll_joint",
+          "left_ankle_roll_joint",
+          "right_ankle_roll_joint",
+          "head_yaw_joint",
+          "left_shoulder_yaw_joint",
+          "right_shoulder_yaw_joint",
+          "left_elbow_pitch_joint",
+          "right_elbow_pitch_joint",
+          "left_wrist_yaw_joint",
+          "right_wrist_yaw_joint",
+          "left_wrist_roll_joint",
+          "right_wrist_roll_joint",
+          "left_wrist_pitch_joint",
+          "right_wrist_pitch_joint",
+        ]
+  events:
+    add_joint_default_pos:
+      params:
+        asset_cfg:
+          joint_names: *gr1t2_joints
+    base_com:
+      func: isaaclab.envs.mdp:randomize_rigid_body_com
+      params:
+        asset_cfg:
+          body_names: "waist_roll_link"
+    randomize_rigid_body_mass:
+      params:
+        asset_cfg:
+          body_names: ".*hand_yaw.*|waist_roll_link"
+  rewards:
+    anti_shake_ang_vel:
+      params:
+        body_names: ["left_hand_yaw_link", "right_hand_yaw_link", "head_yaw_link"]
+    feet_acc:
+      weight: -2.5e-6
+    joint_limit:
+      params:
+        asset_cfg:
+          joint_names: *gr1t2_joints
+  observations:
+    policy:
+      joint_pos:
+        params:
+          asset_cfg:
+            _target_: isaaclab.managers.SceneEntityCfg
+            name: "robot"
+            joint_names: *gr1t2_joints
+      joint_vel:
+        params:
+          asset_cfg:
+            _target_: isaaclab.managers.SceneEntityCfg
+            name: "robot"
+            joint_names: *gr1t2_joints
+    critic:
+      joint_pos:
+        params:
+          asset_cfg:
+            _target_: isaaclab.managers.SceneEntityCfg
+            name: "robot"
+            joint_names: *gr1t2_joints
+      joint_vel:
+        params:
+          asset_cfg:
+            _target_: isaaclab.managers.SceneEntityCfg
+            name: "robot"
+            joint_names: *gr1t2_joints
+  config:
+    robot:
+      type: gr1t2
+    terrain_type: plane
+  commands:
+    motion:
+      anchor_body: "base_link"
+      motion_lib_num_dof: 32
+      vr_3point_body: ["left_hand_yaw_link", "right_hand_yaw_link", "waist_roll_link"]
+      body_names:
+        [
+          "base_link",
+          "left_thigh_roll_link",
+          "left_shank_pitch_link",
+          "left_foot_roll_link",
+          "right_thigh_roll_link",
+          "right_shank_pitch_link",
+          "right_foot_roll_link",
+          "waist_roll_link",
+          "head_yaw_link",
+          "left_upper_arm_roll_link",
+          "left_lower_arm_pitch_link",
+          "left_hand_yaw_link",
+          "left_hand_pitch_link",
+          "right_upper_arm_roll_link",
+          "right_lower_arm_pitch_link",
+          "right_hand_yaw_link",
+          "right_hand_pitch_link",
+        ]
+      feet_body_names: ["left_foot_roll_link", "right_foot_roll_link"]
+      reward_point_body:
+        ["waist_roll_link", "left_hand_pitch_link", "right_hand_pitch_link"]
+      reward_point_body_offset:
+        [[0.0, 0.0, 0.35], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+      num_future_frames: 10
+      dt_future_ref_frames: 0.1
+      smpl_num_future_frames: 10
+      smpl_dt_future_ref_frames: 0.02
+      cat_upper_body_poses: true
+      cat_upper_body_poses_prob: 0.5
+      freeze_frame_aug: true
+      teleop_sample_prob_when_smpl: 0.5
+      motion_lib_cfg:
+        adaptive_sampling:
+          adp_samp_failure_rate_max_over_mean: 200
+        motion_file: null
+        smpl_motion_file: cibo/data/bones_seed_sample/pkl_filtered
+        smpl_y_up: true
+        asset:
+          assetFileName: "gr1t2_no_fingers.xml"
+
+algo:
+  config:
+    actor:
+      backbone:
+        reencode_smpl_g1_recon: true
+        encoders:
+          smpl:
+            inputs:
+              [
+                "smpl_joints_multi_future_local_nonflat",
+                "smpl_root_ori_b_multi_future",
+                "joint_pos_multi_future_wrist_for_smpl",
+              ]
+    empty_cache_every_n_ppo_epoch: -1
+    num_mini_batches: 1
+    num_steps_per_env: 24
+    use_clampped_std: true
+    std_clamp_min: 0.001
+    std_clamp_max: 0.5
+    max_grad_norm: 0.1

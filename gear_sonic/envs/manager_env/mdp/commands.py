@@ -227,6 +227,9 @@ class TrackingCommand(CommandTerm):
                 "randomize_wrist_std": self.cfg.randomize_wrist_std,
             }
         )
+        mujoco_joint_names = env.cfg.isaaclab_to_mujoco_mapping.get("mujoco_joints")
+        if mujoco_joint_names is not None:
+            motion_lib_cfg["actuated_joint_names"] = mujoco_joint_names
 
         self.motion_lib = motion_lib_robot.MotionLibRobot(
             motion_lib_cfg, self.num_envs, self.device
@@ -255,8 +258,32 @@ class TrackingCommand(CommandTerm):
         self.has_dof_mismatch = self.extra_num_dof > 0
 
         if self.has_dof_mismatch:
-            self.body_joint_indices = joint_utils.get_body_joint_indices(self.robot)
-            self.extra_joint_indices = joint_utils.get_hand_joint_indices(self.robot)
+            body_joint_names = env.cfg.isaaclab_to_mujoco_mapping.get("isaaclab_dof_joints")
+            if body_joint_names is None:
+                self.body_joint_indices = joint_utils.get_body_joint_indices(self.robot)
+                self.extra_joint_indices = joint_utils.get_hand_joint_indices(self.robot)
+            else:
+                self.body_joint_indices = torch.tensor(
+                    [self.robot.joint_names.index(name) for name in body_joint_names],
+                    dtype=torch.long,
+                    device=self.device,
+                )
+                body_joint_ids = set(self.body_joint_indices.tolist())
+                self.extra_joint_indices = torch.tensor(
+                    [i for i in range(self.robot_num_dof) if i not in body_joint_ids],
+                    dtype=torch.long,
+                    device=self.device,
+                )
+            if len(self.body_joint_indices) != self.motion_lib_num_dof:
+                raise ValueError(
+                    f"Resolved {len(self.body_joint_indices)} policy joints, expected "
+                    f"motion_lib_num_dof={self.motion_lib_num_dof}"
+                )
+            if len(self.extra_joint_indices) != self.extra_num_dof:
+                raise ValueError(
+                    f"Resolved {len(self.extra_joint_indices)} extra joints, expected "
+                    f"extra_num_dof={self.extra_num_dof}"
+                )
             self.extra_default_positions = torch.tensor(
                 self.cfg.hand_default_positions or [0.0] * self.extra_num_dof,
                 dtype=torch.float32,

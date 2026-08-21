@@ -165,10 +165,23 @@ class Humanoid_Batch:
         )
         self.dof_axis = []
 
-        joints = sorted(
-            [j.attrib["name"] for j in tree.getroot().find("worldbody").findall(".//joint")]
-        )
-        motors = sorted([m.attrib["name"] for m in tree.getroot().find("actuator").getchildren()])
+        joint_nodes = tree.getroot().find("worldbody").findall(".//joint")
+        joints = sorted(j.attrib["name"] for j in joint_nodes)
+        motor_nodes = tree.getroot().find("actuator").getchildren()
+        motors = sorted(m.attrib["joint"] for m in motor_nodes)
+
+        configured_joint_names = cfg.get("actuated_joint_names", None)
+        if configured_joint_names is not None:
+            missing_joints = sorted(set(configured_joint_names) - set(joints))
+            missing_motors = sorted(set(configured_joint_names) - set(motors))
+            if missing_joints or missing_motors:
+                raise ValueError(
+                    "Configured actuated joints are missing from the MJCF: "
+                    f"joints={missing_joints}, motors={missing_motors}"
+                )
+            motors = list(configured_joint_names)
+
+        self._actuated_joint_names = set(motors)
 
         assert len(motors) > 0, "No motors found in the mjcf file"
 
@@ -191,20 +204,20 @@ class Humanoid_Batch:
             if m not in joints:
                 print(m)
 
-        if (
-            "type" in tree.getroot().find("worldbody").findall(".//joint")[0].attrib
-            and tree.getroot().find("worldbody").findall(".//joint")[0].attrib["type"] == "free"
-        ):
-            for j in tree.getroot().find("worldbody").findall(".//joint")[1:]:
-                self.dof_axis.append([int(i) for i in j.attrib["axis"].split(" ")])
+        if "type" in joint_nodes[0].attrib and joint_nodes[0].attrib["type"] == "free":
+            for j in joint_nodes[1:]:
+                if j.attrib["name"] in self._actuated_joint_names:
+                    self.dof_axis.append([int(i) for i in j.attrib["axis"].split(" ")])
             self.has_freejoint = True
-        elif "type" not in tree.getroot().find("worldbody").findall(".//joint")[0].attrib:
-            for j in tree.getroot().find("worldbody").findall(".//joint"):
-                self.dof_axis.append([int(i) for i in j.attrib["axis"].split(" ")])
+        elif "type" not in joint_nodes[0].attrib:
+            for j in joint_nodes:
+                if j.attrib["name"] in self._actuated_joint_names:
+                    self.dof_axis.append([int(i) for i in j.attrib["axis"].split(" ")])
             self.has_freejoint = True
         else:
-            for j in tree.getroot().find("worldbody").findall(".//joint")[6:]:
-                self.dof_axis.append([int(i) for i in j.attrib["axis"].split(" ")])
+            for j in joint_nodes[6:]:
+                if j.attrib["name"] in self._actuated_joint_names:
+                    self.dof_axis.append([int(i) for i in j.attrib["axis"].split(" ")])
             self.has_freejoint = False
 
         self.dof_axis = torch.tensor(self.dof_axis)
@@ -292,6 +305,8 @@ class Humanoid_Batch:
                 all_joints = all_joints[6:]
 
             for joint in all_joints:
+                if joint.attrib.get("name") not in self._actuated_joint_names:
+                    continue
                 if joint.attrib.get("range") is not None:
                     joints_range.append(
                         np.fromstring(joint.attrib.get("range"), dtype=float, sep=" ")
@@ -300,7 +315,8 @@ class Humanoid_Batch:
                     if not joint.attrib.get("type") == "free":
                         joints_range.append([-np.pi, np.pi])
             for joint_node in xml_node.findall("joint"):
-                body_to_joint[node_name] = joint_node.attrib.get("name")
+                if joint_node.attrib.get("name") in self._actuated_joint_names:
+                    body_to_joint[node_name] = joint_node.attrib.get("name")
 
             for next_node in xml_node.findall("body"):
                 node_index = _add_xml_node(next_node, curr_index, node_index)
