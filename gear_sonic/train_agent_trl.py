@@ -265,6 +265,10 @@ def main(config: OmegaConf):
         args_cli.distributed = config.multi_gpu
         args_cli.device = device
 
+        if config.get("viz", None):
+            args_cli.visualizer = [str(config.viz)]
+            args_cli.visualizer_explicit = True
+
         # Base kit args (quiet logs)
         args_cli.kit_args = (
             "--/log/level=error --/log/fileLogLevel=error --/log/outputStreamLevel=error"

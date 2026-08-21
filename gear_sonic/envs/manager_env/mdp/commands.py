@@ -4081,7 +4081,7 @@ class TrackingCommandCfg(CommandTermCfg):
 
     motion_lib_cfg: dict = None
     motion_file: str = None
-    smpl_motion_file: str = None
+    smpl_motion_file: str = "data/bones_seed_smpl/extracted/smpl_filtered"
     filter_motion_keys: list[str] = None
     use_paired_motions: bool = False
     # Contact-based initialization: sample timestamps before first contact frame
