@@ -2,7 +2,7 @@
 # ruff: noqa: T201, DOC
 """Convert SOMA retargeter CSV/PKL data to motion_lib format for SONIC training.
 
-SOMA retargeter outputs GR1T2 32-DOF motion data as CSV files (joint_pos.csv,
+SOMA retargeter outputs G1 29-DOF motion data as CSV files (joint_pos.csv,
 body_pos.csv, body_quat.csv) or as a joblib PKL with the same fields. This
 script converts that data into the motion_lib PKL format expected by SONIC
 training (root_trans_offset, pose_aa, dof, root_rot, fps).
@@ -32,155 +32,145 @@ Usage:
 
     # Bones-SEED: directory of flat CSVs (single session)
     python scripts/motion/convert_soma_csv_to_motion_lib.py \
-        --input /path/to/bones_SEED/gr1t2/csv/210531 \
+        --input /path/to/bones_SEED/g1/csv/210531 \
         --output data/bones_seed_210531.pkl --fps 50
 
     # Bones-SEED: all sessions (parent dir)
     python scripts/motion/convert_soma_csv_to_motion_lib.py \
-        --input /path/to/bones_SEED/gr1t2/csv \
+        --input /path/to/bones_SEED/g1/csv \
         --output data/bones_seed_all.pkl --fps 50
 """
 
 import argparse
 import os
-from pathlib import Path
 import sys
-import xml.etree.ElementTree as ETree
 
 import joblib
 import numpy as np
 from scipy.spatial import transform
 
-GR1T2_MJCF_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "data/assets/robot_description/mjcf/gr1t2_no_fingers.xml"
-)
-
-# SONIC's external MuJoCo/CSV order. Keep this aligned by name with
-# envs/manager_env/robots/gr1t2.py; the XML hierarchy has a different order.
-BODY_JOINTS_MUJOCO = [
-    "left_hip_roll_joint", "left_hip_yaw_joint", "left_hip_pitch_joint",
-    "left_knee_pitch_joint", "left_ankle_pitch_joint", "left_ankle_roll_joint",
-    "right_hip_roll_joint", "right_hip_yaw_joint", "right_hip_pitch_joint",
-    "right_knee_pitch_joint", "right_ankle_pitch_joint", "right_ankle_roll_joint",
-    "waist_yaw_joint", "waist_pitch_joint", "waist_roll_joint",
-    "head_pitch_joint", "head_roll_joint", "head_yaw_joint",
-    "left_shoulder_pitch_joint", "left_shoulder_roll_joint",
-    "left_shoulder_yaw_joint", "left_elbow_pitch_joint",
-    "left_wrist_yaw_joint", "left_wrist_roll_joint", "left_wrist_pitch_joint",
-    "right_shoulder_pitch_joint", "right_shoulder_roll_joint",
-    "right_shoulder_yaw_joint", "right_elbow_pitch_joint",
-    "right_wrist_yaw_joint", "right_wrist_roll_joint", "right_wrist_pitch_joint",
-]
-
-BODY_JOINTS_ISAACLAB = [
-    "left_hip_roll_joint", "right_hip_roll_joint", "waist_yaw_joint",
-    "left_hip_yaw_joint", "right_hip_yaw_joint", "waist_pitch_joint",
-    "left_hip_pitch_joint", "right_hip_pitch_joint", "waist_roll_joint",
-    "left_knee_pitch_joint", "right_knee_pitch_joint",
-    "left_ankle_pitch_joint", "right_ankle_pitch_joint",
-    "left_shoulder_pitch_joint", "right_shoulder_pitch_joint",
-    "head_roll_joint", "left_ankle_roll_joint", "right_ankle_roll_joint",
-    "left_shoulder_roll_joint", "right_shoulder_roll_joint",
-    "head_pitch_joint", "left_shoulder_yaw_joint", "right_shoulder_yaw_joint",
-    "head_yaw_joint", "left_elbow_pitch_joint", "right_elbow_pitch_joint",
-    "left_wrist_yaw_joint", "right_wrist_yaw_joint",
-    "left_wrist_roll_joint", "right_wrist_roll_joint",
-    "left_wrist_pitch_joint", "right_wrist_pitch_joint",
-]
-
-
-def _load_gr1t2_mjcf_contract():
-    """Read the GR1T2 worldbody contract without loading stale finger actuators."""
-    root = ETree.parse(GR1T2_MJCF_PATH).getroot()
-    xml_root_body = root.find("worldbody/body")
-    if xml_root_body is None:
-        raise ValueError(f"GR1T2 MJCF has no worldbody root: {GR1T2_MJCF_PATH}")
-
-    body_names = []
-    body_to_joint = {}
-    joint_axis = {}
-    joint_range = {}
-    xml_joint_order = []
-
-    def visit(body):
-        body_index = len(body_names)
-        body_name = body.get("name")
-        if not body_name:
-            raise ValueError("Every GR1T2 MJCF body must have a name")
-        body_names.append(body_name)
-        for joint in body.findall("joint"):
-            name = joint.get("name")
-            if name == "floating_base" or joint.get("type") == "free":
-                continue
-            if name in joint_axis:
-                raise ValueError(f"Duplicate GR1T2 MJCF joint name: {name}")
-            xml_joint_order.append(name)
-            body_to_joint[body_index] = name
-            joint_axis[name] = np.fromstring(joint.get("axis", ""), sep=" ", dtype=np.float32)
-            joint_range[name] = np.fromstring(
-                joint.get("range", ""), sep=" ", dtype=np.float32
-            )
-        for child in body.findall("body"):
-            visit(child)
-
-    visit(xml_root_body)
-    return body_names, body_to_joint, xml_joint_order, joint_axis, joint_range
-
-
-(
-    POSE_AA_BODY_NAMES,
-    POSE_AA_BODY_TO_JOINT,
-    XML_JOINTS,
-    _JOINT_AXIS_BY_NAME,
-    _JOINT_RANGE_BY_NAME,
-) = _load_gr1t2_mjcf_contract()
-
-NUM_DOF = len(BODY_JOINTS_MUJOCO)
-NUM_BODIES = len(POSE_AA_BODY_NAMES)
+# IsaacLab ↔ MuJoCo joint reordering (29 DOFs for G1).
+# MJ_TO_IL[mj] = il: for MuJoCo DOF index mj, gives the IsaacLab index il.
+# Source: external_dependencies/SONIC_Web/demo_python.py
 MJ_TO_IL = np.array(
-    [BODY_JOINTS_ISAACLAB.index(name) for name in BODY_JOINTS_MUJOCO], dtype=np.int32
+    [
+        0,
+        3,
+        6,
+        9,
+        13,
+        17,
+        1,
+        4,
+        7,
+        10,
+        14,
+        18,
+        2,
+        5,
+        8,
+        11,
+        15,
+        19,
+        21,
+        23,
+        25,
+        27,
+        12,
+        16,
+        20,
+        22,
+        24,
+        26,
+        28,
+    ],
+    dtype=np.int32,
 )
-MJ_TO_XML = np.array([XML_JOINTS.index(name) for name in BODY_JOINTS_MUJOCO], dtype=np.int32)
-XML_TO_MJ = np.array([BODY_JOINTS_MUJOCO.index(name) for name in XML_JOINTS], dtype=np.int32)
-DOF_AXIS = np.stack([_JOINT_AXIS_BY_NAME[name] for name in BODY_JOINTS_MUJOCO])
-DOF_RANGE = np.stack([_JOINT_RANGE_BY_NAME[name] for name in BODY_JOINTS_MUJOCO])
-BONES_CSV_JOINT_NAMES = [f"{name}_dof" for name in BODY_JOINTS_MUJOCO]
-BONES_CSV_HEADER = [
-    "Frame",
-    "root_translateX", "root_translateY", "root_translateZ",
-    "root_rotateX", "root_rotateY", "root_rotateZ",
-    *BONES_CSV_JOINT_NAMES,
-]
 
-assert NUM_DOF == 32
-assert len(BODY_JOINTS_ISAACLAB) == NUM_DOF
-assert len(XML_JOINTS) == NUM_DOF
-assert set(XML_JOINTS) == set(BODY_JOINTS_MUJOCO) == set(BODY_JOINTS_ISAACLAB)
-assert sorted(MJ_TO_IL.tolist()) == list(range(NUM_DOF))
-assert sorted(MJ_TO_XML.tolist()) == list(range(NUM_DOF))
-assert sorted(XML_TO_MJ.tolist()) == list(range(NUM_DOF))
-assert DOF_AXIS.shape == (NUM_DOF, 3)
-assert DOF_RANGE.shape == (NUM_DOF, 2)
-assert np.isfinite(DOF_AXIS).all() and np.all(np.linalg.norm(DOF_AXIS, axis=1) > 0)
-assert len(BONES_CSV_HEADER) == 39
+# G1 29-DOF axis definitions (from Humanoid_Batch / g1_29dof_rev_1_0.xml).
+# Each DOF rotates around a single axis. Hardcoded to avoid torch dependency.
+NUM_DOF = 29
+NUM_BODIES = 30  # pelvis + 29 actuated links
+DOF_AXIS = np.array(
+    [
+        [0, 1, 0],
+        [1, 0, 0],
+        [0, 0, 1],
+        [0, 1, 0],
+        [0, 1, 0],
+        [1, 0, 0],  # left leg
+        [0, 1, 0],
+        [1, 0, 0],
+        [0, 0, 1],
+        [0, 1, 0],
+        [0, 1, 0],
+        [1, 0, 0],  # right leg
+        [0, 0, 1],
+        [1, 0, 0],
+        [0, 1, 0],  # waist
+        [0, 1, 0],
+        [1, 0, 0],
+        [0, 0, 1],
+        [0, 1, 0],
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],  # left arm
+        [0, 1, 0],
+        [1, 0, 0],
+        [0, 0, 1],
+        [0, 1, 0],
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],  # right arm
+    ],
+    dtype=np.float32,
+)
+
+
+# Joint names in Bones-SEED CSV column order (after Frame + 6 root columns).
+# These are in MuJoCo/MJCF actuator order (same as g1_29dof_rev_1_0.xml motors).
+BONES_CSV_JOINT_NAMES = [
+    "left_hip_pitch_joint_dof",
+    "left_hip_roll_joint_dof",
+    "left_hip_yaw_joint_dof",
+    "left_knee_joint_dof",
+    "left_ankle_pitch_joint_dof",
+    "left_ankle_roll_joint_dof",
+    "right_hip_pitch_joint_dof",
+    "right_hip_roll_joint_dof",
+    "right_hip_yaw_joint_dof",
+    "right_knee_joint_dof",
+    "right_ankle_pitch_joint_dof",
+    "right_ankle_roll_joint_dof",
+    "waist_yaw_joint_dof",
+    "waist_roll_joint_dof",
+    "waist_pitch_joint_dof",
+    "left_shoulder_pitch_joint_dof",
+    "left_shoulder_roll_joint_dof",
+    "left_shoulder_yaw_joint_dof",
+    "left_elbow_joint_dof",
+    "left_wrist_roll_joint_dof",
+    "left_wrist_pitch_joint_dof",
+    "left_wrist_yaw_joint_dof",
+    "right_shoulder_pitch_joint_dof",
+    "right_shoulder_roll_joint_dof",
+    "right_shoulder_yaw_joint_dof",
+    "right_elbow_joint_dof",
+    "right_wrist_roll_joint_dof",
+    "right_wrist_pitch_joint_dof",
+    "right_wrist_yaw_joint_dof",
+]
 
 
 def load_bones_csv(csv_path: str) -> dict:
     """Load a single Bones-SEED flat CSV motion file.
 
-    GR1T2 CSV format: Frame, six root fields, then 32 canonical joint DOFs.
+    Bones-SEED CSV format: Frame, root_translate{X,Y,Z}, root_rotate{X,Y,Z}, 29 joint DOFs.
     All angles in degrees, positions in centimeters.
     """
     import pandas as pd
 
     data = pd.read_csv(csv_path)
-    actual_header = data.columns.tolist()
-    if actual_header != BONES_CSV_HEADER:
-        raise ValueError(
-            f"GR1T2 CSV header mismatch for {csv_path}: expected exactly "
-            f"{BONES_CSV_HEADER}, got {actual_header}"
-        )
     T = len(data)
 
     # Root position: cm → meters
@@ -213,25 +203,21 @@ def load_bones_csv(csv_path: str) -> dict:
     root_quat_wxyz = root_quat_xyzw[:, [3, 0, 1, 2]]
 
     # Joint DOFs: degrees → radians, already in MuJoCo/MJCF actuator order
-    joint_pos_mj = np.deg2rad(data[BONES_CSV_JOINT_NAMES].values).astype(np.float32)
-    if joint_pos_mj.shape != (T, NUM_DOF):
-        raise ValueError(
-            f"GR1T2 DOF shape mismatch for {csv_path}: expected {(T, NUM_DOF)}, "
-            f"got {joint_pos_mj.shape}"
-        )
+    joint_cols = [c for c in data.columns if c.endswith("_dof")]
+    joint_pos_mj = np.deg2rad(data[joint_cols].values).astype(np.float32)  # (T, 29)
 
     # Create dummy body_pos_w and body_quat_w (only root body populated, rest zeros)
     # The converter only uses body_pos_w[:,0] for root_trans and body_quat_w[:,0] for root_rot
-    body_pos_w = np.zeros((T, NUM_BODIES, 3), dtype=np.float32)
+    body_pos_w = np.zeros((T, 14, 3), dtype=np.float32)
     body_pos_w[:, 0, :] = root_pos
-    body_quat_w = np.zeros((T, NUM_BODIES, 4), dtype=np.float32)
+    body_quat_w = np.zeros((T, 14, 4), dtype=np.float32)
     body_quat_w[:, :, 0] = 1.0  # identity quaternion wxyz
     body_quat_w[:, 0, :] = root_quat_wxyz
 
     return {
-        "joint_pos": joint_pos_mj,  # (T, 32) canonical MuJoCo order, radians
-        "body_pos_w": body_pos_w,
-        "body_quat_w": body_quat_w,  # wxyz
+        "joint_pos": joint_pos_mj,  # (T, 29) MuJoCo order, radians
+        "body_pos_w": body_pos_w,  # (T, 14, 3)
+        "body_quat_w": body_quat_w,  # (T, 14, 4) wxyz
         "joint_order": "mj",  # already in MuJoCo order, skip IL→MJ reorder
     }
 
@@ -249,20 +235,15 @@ def load_csv_motion(motion_dir: str) -> dict:
     body_pos = np.loadtxt(body_pos_f, delimiter=",", skiprows=1, dtype=np.float32)
     body_quat = np.loadtxt(body_quat_f, delimiter=",", skiprows=1, dtype=np.float32)
 
-    # Infer the body count carried by the deploy-format CSV matrices.
+    # Reshape body data: (T, 14*3) → (T, 14, 3), (T, 14*4) → (T, 14, 4)
     T = joint_pos.shape[0]
-    if joint_pos.shape != (T, NUM_DOF):
-        raise ValueError(
-            f"GR1T2 joint_pos shape mismatch in {motion_dir}: expected {(T, NUM_DOF)}, "
-            f"got {joint_pos.shape}"
-        )
     body_pos = body_pos.reshape(T, -1, 3)
     body_quat = body_quat.reshape(T, -1, 4)
 
     return {
-        "joint_pos": joint_pos,  # (T, 32) IsaacLab order
-        "body_pos_w": body_pos,
-        "body_quat_w": body_quat,  # wxyz format
+        "joint_pos": joint_pos,  # (T, 29) IsaacLab order
+        "body_pos_w": body_pos,  # (T, 14, 3) world frame
+        "body_quat_w": body_quat,  # (T, 14, 4) wxyz format
     }
 
 
@@ -270,29 +251,20 @@ def convert_sequence(seq_data: dict, fps: int, humanoid_fk=None) -> dict:  # noq
     """Convert a single deploy-format sequence to motion_lib format.
 
     Args:
-        seq_data: dict with joint_pos (T, 32), body_pos_w and body_quat_w
+        seq_data: dict with joint_pos (T, 29), body_pos_w (T, 14, 3),
+                  body_quat_w (T, 14, 4 wxyz)
         fps: frame rate of the input data
         humanoid_fk: Optional Humanoid_Batch instance (unused, kept for compat)
 
     Returns:
         motion_lib entry dict with root_trans_offset, pose_aa, dof, root_rot, fps
     """
-    joint_pos = np.asarray(seq_data["joint_pos"], dtype=np.float32)
-    body_pos_w = np.asarray(seq_data["body_pos_w"], dtype=np.float32)
-    body_quat_w = np.asarray(seq_data["body_quat_w"], dtype=np.float32)
+    joint_pos = seq_data["joint_pos"]  # (T, 29)
+    body_pos_w = seq_data["body_pos_w"]  # (T, 14, 3)
+    body_quat_w = seq_data["body_quat_w"]  # (T, 14, 4) wxyz
     joint_order = seq_data.get("joint_order", "il")  # "il" or "mj"
 
     T = joint_pos.shape[0]
-    if joint_pos.shape != (T, NUM_DOF):
-        raise ValueError(f"Expected GR1T2 joint_pos shape {(T, NUM_DOF)}, got {joint_pos.shape}")
-    if body_pos_w.ndim != 3 or body_pos_w.shape[0] != T or body_pos_w.shape[2] != 3:
-        raise ValueError(f"Invalid body_pos_w shape: {body_pos_w.shape}")
-    if body_quat_w.ndim != 3 or body_quat_w.shape[0] != T or body_quat_w.shape[2] != 4:
-        raise ValueError(f"Invalid body_quat_w shape: {body_quat_w.shape}")
-    if body_pos_w.shape[1] < 1 or body_quat_w.shape[1] < 1:
-        raise ValueError("body_pos_w and body_quat_w must contain the root body")
-    if not all(np.isfinite(array).all() for array in (joint_pos, body_pos_w, body_quat_w)):
-        raise ValueError("GR1T2 input contains NaN or Inf")
 
     # 1. Root position: body_0 (pelvis) position
     root_trans_offset = body_pos_w[:, 0, :].copy()  # (T, 3)
@@ -304,22 +276,19 @@ def convert_sequence(seq_data: dict, fps: int, humanoid_fk=None) -> dict:  # noq
     # 3. Reorder DOFs to MuJoCo order if needed
     if joint_order == "il":
         # Input is IsaacLab order → reorder to MuJoCo (MJCF actuator order)
-        dof_mj = joint_pos[:, MJ_TO_IL]
-    elif joint_order == "mj":
-        # Input is already in MuJoCo order (e.g., Bones-SEED CSVs)
-        dof_mj = joint_pos
+        dof_mj = joint_pos[:, MJ_TO_IL]  # (T, 29)
     else:
-        raise ValueError(f"Unknown joint_order {joint_order!r}; expected 'il' or 'mj'")
+        # Input is already in MuJoCo order (e.g., Bones-SEED CSVs)
+        dof_mj = joint_pos  # (T, 29)
 
-    dof = dof_mj
-    if dof.shape != (T, NUM_DOF):
-        raise ValueError(f"Expected exact GR1T2 DOF shape {(T, NUM_DOF)}, got {dof.shape}")
+    # 4. Convert DOF → pose_aa using hardcoded G1 axis definitions
+    dof = dof_mj[:, :NUM_DOF]
 
     # pose_aa[body_idx] = dof_axis * dof_value (axis-angle representation)
+    # Body 0 = pelvis (root), bodies 1-29 = actuated joints
     pose_aa = np.zeros((T, NUM_BODIES, 3), dtype=np.float32)
-    for body_index, joint_name in POSE_AA_BODY_TO_JOINT.items():
-        dof_index = BODY_JOINTS_MUJOCO.index(joint_name)
-        pose_aa[:, body_index, :] = DOF_AXIS[dof_index] * dof[:, dof_index, None]
+    # Actuated joints: body idx = dof idx + 1
+    pose_aa[:, 1:NUM_BODIES, :] = DOF_AXIS[None, :, :] * dof[:, :, None]
 
     # Set root rotation as axis-angle
     pose_aa[:, 0, :] = transform.Rotation.from_quat(root_quat_xyzw).as_rotvec()
@@ -358,17 +327,20 @@ def downsample_sequence(entry: dict, fps_source: int, fps_target: int) -> dict:
 
 
 def init_humanoid_fk():
-    """Initialize Humanoid_Batch with the canonical 32 GR1T2 body joints."""
+    """Initialize Humanoid_Batch from the G1 MJCF config.
+
+    Only needed for non-Bones-SEED inputs (deploy PKL, SOMA CSV dirs).
+    Bones-SEED path uses hardcoded DOF_AXIS constants instead.
+    """
     import omegaconf
 
     motion_cfg = omegaconf.OmegaConf.create(
         {
             "asset": {
                 "assetRoot": "gear_sonic/data/assets/robot_description/mjcf/",
-                "assetFileName": "gr1t2_no_fingers.xml",
+                "assetFileName": "g1_29dof_rev_1_0.xml",
                 "urdfFileName": "",
             },
-            "actuated_joint_names": BODY_JOINTS_MUJOCO,
             "extend_config": [],
         }
     )
@@ -405,8 +377,7 @@ def process_session_csvs(args_tuple):
                 entry = downsample_sequence(entry, fps_source, fps)
             joblib.dump({name: entry}, out_path, compress=True)
             converted += 1
-        except Exception as exc:  # noqa: BLE001
-            print(f"  WARNING: Failed to convert {os.path.join(session_dir, csv_f)}: {exc}")
+        except Exception:  # noqa: BLE001
             failed += 1
     return session_name, converted, failed, len(csv_files)
 
@@ -445,7 +416,7 @@ def main():
     )
     args = parser.parse_args()
 
-    print(f"GR1T2 {NUM_DOF} DOFs, {NUM_BODIES} MJCF pose bodies")
+    print(f"G1 {NUM_DOF} DOFs, {NUM_BODIES} bodies (hardcoded axes)")
 
     # Individual PKL mode: skip scanning, go straight to parallel per-session processing
     if args.individual:
