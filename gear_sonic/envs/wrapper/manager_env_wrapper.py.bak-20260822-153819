@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from isaaclab.envs.manager_based_rl_env import ManagerBasedEnv
 
 # Import joint index functions (single source of truth)
-from gear_sonic.envs.env_utils.joint_utils import get_body_joint_indices, get_extra_joint_indices
+from gear_sonic.envs.env_utils.joint_utils import get_body_joint_indices, get_hand_joint_indices
 
 # Import visualization markers for contact point visualization
 try:
@@ -60,10 +60,7 @@ class ManagerEnvWrapper:
             not self.config.get("headless", False)
         )
         self._viz_every_n_steps = int(self.config.get("viz_every_n_steps", 1))
-        policy_joint_count = len(
-            env.cfg.isaaclab_to_mujoco_mapping.get("isaaclab_dof_joints", [])
-        )
-        self._plot_action_dim = int(self.config.get("action_plot_dim", policy_joint_count))
+        self._plot_action_dim = int(self.config.get("action_plot_dim", 29))
         clip_default = self.config.get("action_clip_value", 1.0)  # noqa: F841
         self._action_ylim = float(self.config.get("action_plot_ylim", 10.0))
         self._plot_window = int(self.config.get("action_plot_window", 200))
@@ -174,8 +171,9 @@ class ManagerEnvWrapper:
             self.viewer_focused = False
 
     def _setup_replay_joint_indices(self):
-        """Resolve replay policy/extra joints from the active robot mapping."""
-        self._setup_action_joint_indices()
+        """Setup joint indices for replay mode if robot has more DOFs than motion lib (29)."""
+        if self.env.scene["robot"].num_joints > 29:
+            self._setup_action_joint_indices()
 
     def _compute_tokenizer_obs_indices(self):
         """Compute start and end indices for each tokenizer observation in the flattened tensor."""
@@ -198,7 +196,7 @@ class ManagerEnvWrapper:
         """Setup policy_atm for action_transform_module when robot has more DOFs than ATM expects."""
         atm_num_joints = env_config.get("robot", {}).get("actions_dim") or env_config.get(
             "robot", {}
-        ).get("num_joints", len(self._body_joint_indices))
+        ).get("num_joints", 29)
         self._needs_policy_atm = self.config.get("needs_policy_atm", True)
         self._atm_num_joints = atm_num_joints
         self._current_num_joints = self.env.scene["robot"].num_joints
@@ -217,16 +215,13 @@ class ManagerEnvWrapper:
             self._setup_action_joint_indices()
 
     def _setup_action_joint_indices(self):
-        """Compute name-based policy and extra articulation joint indices."""
+        """Compute joint indices for mapping body (29 DOF) and hand (14 DOF) actions."""
         if self._body_joint_indices is not None:
             return
 
         robot = self.env.scene["robot"]
-        body_joint_names = self.env.cfg.isaaclab_to_mujoco_mapping.get("isaaclab_dof_joints")
-        if not body_joint_names:
-            raise ValueError("Active robot mapping does not define isaaclab_dof_joints")
-        self._body_joint_indices = get_body_joint_indices(robot, list(body_joint_names))
-        self._hand_joint_indices = get_extra_joint_indices(robot, list(body_joint_names))
+        self._body_joint_indices = get_body_joint_indices(robot)
+        self._hand_joint_indices = get_hand_joint_indices(robot)
 
     def _setup_finger_primitives(self):
         """Setup finger primitive action mapping from config.
@@ -295,9 +290,9 @@ class ManagerEnvWrapper:
             Tensor of shape (num_envs, num_finger_joints) with joint position targets
         """
         num_envs = primitive_actions.shape[0]
-        if self._hand_joint_indices is None:
-            raise RuntimeError("Extra joint indices must be resolved before finger conversion")
-        num_finger_joints = len(self._hand_joint_indices)
+        num_finger_joints = (
+            len(self._hand_joint_indices) if self._hand_joint_indices is not None else 14
+        )
         finger_targets = torch.zeros(
             num_envs, num_finger_joints, device=self.device, dtype=primitive_actions.dtype
         )
@@ -334,7 +329,8 @@ class ManagerEnvWrapper:
                     rel_idx = hand_indices_list.index(abs_idx)
                     finger_targets[:, rel_idx] = joint_targets[:, j]
                 else:
-                    raise RuntimeError("Extra joint indices are unavailable")
+                    # Fallback: assume hand joints are at the end
+                    finger_targets[:, abs_idx - 29] = joint_targets[:, j]
 
         return finger_targets
 
@@ -1911,21 +1907,24 @@ class ManagerEnvWrapper:
             self._replay_motion_ids, self._replay_time_steps
         )
 
-        # Handle a body-only motion library driving a larger articulation.
+        # Handle DOF mismatch between motion library (e.g., 29 DOF) and robot (e.g., 43 DOF)
         robot_num_joints = self.motion_command.robot.num_joints
         motion_lib_num_dof = motion_lib_joint_pos.shape[-1]
 
         if robot_num_joints > motion_lib_num_dof and self._body_joint_indices is not None:
+            # Robot has more DOFs than motion lib (e.g., 43 DOF robot with 29 DOF motion data)
+            # Use body joint indices for proper mapping
             num_envs = motion_lib_joint_pos.shape[0]
 
-            # Preserve articulation defaults for every extra/finger joint.
-            joint_pos = self.motion_command.robot.data.default_joint_pos[
-                self._replay_env_ids
-            ].clone().to(dtype=motion_lib_joint_pos.dtype)
+            # Create full joint tensors with zeros for all DOFs
+            joint_pos = torch.zeros(
+                num_envs, robot_num_joints, device=self.device, dtype=motion_lib_joint_pos.dtype
+            )
             joint_vel = torch.zeros(
                 num_envs, robot_num_joints, device=self.device, dtype=motion_lib_joint_vel.dtype
             )
 
+            # Map motion lib data to body joint indices (using G1_ISAACLab_ORDER mapping)
             joint_pos[:, self._body_joint_indices] = motion_lib_joint_pos
             joint_vel[:, self._body_joint_indices] = motion_lib_joint_vel
 
@@ -1934,13 +1933,9 @@ class ManagerEnvWrapper:
                 self._replay_motion_ids, self._replay_time_steps
             )
             if hand_dof_pos is not None:
+                # Hand DOFs are the last N joints (in Isaac order, not G1_HAND_JOINTS order)
                 num_hand_dof = hand_dof_pos.shape[-1]
-                if num_hand_dof != len(self._hand_joint_indices):
-                    raise ValueError(
-                        f"Motion hand DOFs={num_hand_dof}, expected "
-                        f"{len(self._hand_joint_indices)} extra articulation joints"
-                    )
-                joint_pos[:, self._hand_joint_indices] = hand_dof_pos
+                joint_pos[:, -num_hand_dof:] = hand_dof_pos
         else:
             joint_pos = motion_lib_joint_pos
             joint_vel = motion_lib_joint_vel

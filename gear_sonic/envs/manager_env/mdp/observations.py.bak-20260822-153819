@@ -28,6 +28,44 @@ from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
+# Joint ordering constants (Mujoco order for compatibility)
+G1_MUJOCO_ORDER = [
+    "left_hip_pitch_joint",
+    "left_hip_roll_joint",
+    "left_hip_yaw_joint",
+    "left_knee_joint",
+    "left_ankle_pitch_joint",
+    "left_ankle_roll_joint",
+    "right_hip_pitch_joint",
+    "right_hip_roll_joint",
+    "right_hip_yaw_joint",
+    "right_knee_joint",
+    "right_ankle_pitch_joint",
+    "right_ankle_roll_joint",
+    "waist_yaw_joint",
+    "waist_roll_joint",
+    "waist_pitch_joint",
+    "left_shoulder_pitch_joint",
+    "left_shoulder_roll_joint",
+    "left_shoulder_yaw_joint",
+    "left_elbow_joint",
+    "left_wrist_roll_joint",
+    "left_wrist_pitch_joint",
+    "left_wrist_yaw_joint",
+    "right_shoulder_pitch_joint",
+    "right_shoulder_roll_joint",
+    "right_shoulder_yaw_joint",
+    "right_elbow_joint",
+    "right_wrist_roll_joint",
+    "right_wrist_pitch_joint",
+    "right_wrist_yaw_joint",
+]
+
+# Index mappings for 29 DOF
+isaaclab_to_mujoco_dof = [joint_utils.G1_ISAACLab_ORDER.index(i) for i in G1_MUJOCO_ORDER]
+mujoco_to_isaaclab = [G1_MUJOCO_ORDER.index(i) for i in joint_utils.G1_ISAACLab_ORDER]
+
+
 @configclass
 class PolicyCfg(ObsGroup):
     """Observations for policy group."""
@@ -123,8 +161,9 @@ class PolicyCfg(ObsGroup):
 class PolicyAtmCfg(ObsGroup):
     """Observations for action_transform_module (ATM).
 
-    This group extracts the active robot's configured policy joints, excluding
-    any extra articulation joints such as fingers.
+    This observation group provides body-only observations (29 DOF) for use with
+    pre-trained action_transform_module. When using a 43 DOF robot (29 body + 14 hand),
+    this group extracts only the body joint observations matching ATM's expected input.
 
     NOTE: Order must match the observations the pretrained ATM was trained with.
     """
@@ -1830,36 +1869,25 @@ def ext_forces(
 # Uses get_body_joint_indices from joint_utils.py
 
 
-def _policy_joint_names(env: ManagerBasedEnv) -> list[str]:
-    names = env.cfg.isaaclab_to_mujoco_mapping.get("isaaclab_dof_joints")
-    if not names:
-        raise ValueError("Active robot mapping does not define isaaclab_dof_joints")
-    return list(names)
-
-
 def joint_pos_wo_hand(env: ManagerBasedEnv, asset_cfg) -> torch.Tensor:
-    """Get policy-joint positions in the active robot's policy order."""
+    """Get joint positions excluding hand joints (29 DOF body only)."""
     asset = env.scene[asset_cfg.name]
-    body_indices = joint_utils.get_body_joint_indices(asset, _policy_joint_names(env))
+    body_indices = joint_utils.get_body_joint_indices(asset)
     return asset.data.joint_pos[:, body_indices] - asset.data.default_joint_pos[:, body_indices]
 
 
 def joint_vel_wo_hand(env: ManagerBasedEnv, asset_cfg) -> torch.Tensor:
-    """Get policy-joint velocities in the active robot's policy order."""
+    """Get joint velocities excluding hand joints (29 DOF body only)."""
     asset = env.scene[asset_cfg.name]
-    body_indices = joint_utils.get_body_joint_indices(asset, _policy_joint_names(env))
+    body_indices = joint_utils.get_body_joint_indices(asset)
     return asset.data.joint_vel[:, body_indices] - asset.data.default_joint_vel[:, body_indices]
 
 
 def last_action_wo_hand(env: ManagerBasedEnv, asset_cfg) -> torch.Tensor:
     """Get last actions excluding hand joints."""
     asset = env.scene[asset_cfg.name]
-    policy_names = _policy_joint_names(env)
-    action = env.action_manager.action
-    if action.shape[-1] == len(policy_names):
-        return action
-    body_indices = joint_utils.get_body_joint_indices(asset, policy_names)
-    return action[:, body_indices]
+    body_indices = joint_utils.get_body_joint_indices(asset)
+    return env.action_manager.action[:, body_indices]
 
 
 def last_meta_action(env: ManagerBasedEnv) -> torch.Tensor:

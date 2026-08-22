@@ -260,15 +260,19 @@ class TrackingCommand(CommandTerm):
         if self.has_dof_mismatch:
             body_joint_names = env.cfg.isaaclab_to_mujoco_mapping.get("isaaclab_dof_joints")
             if body_joint_names is None:
-                raise ValueError(
-                    "DOF-mismatched robot mapping must define isaaclab_dof_joints"
-                )
+                self.body_joint_indices = joint_utils.get_body_joint_indices(self.robot)
+                self.extra_joint_indices = joint_utils.get_hand_joint_indices(self.robot)
             else:
-                self.body_joint_indices = joint_utils.get_body_joint_indices(
-                    self.robot, list(body_joint_names)
+                self.body_joint_indices = torch.tensor(
+                    [self.robot.joint_names.index(name) for name in body_joint_names],
+                    dtype=torch.long,
+                    device=self.device,
                 )
-                self.extra_joint_indices = joint_utils.get_extra_joint_indices(
-                    self.robot, list(body_joint_names)
+                body_joint_ids = set(self.body_joint_indices.tolist())
+                self.extra_joint_indices = torch.tensor(
+                    [i for i in range(self.robot_num_dof) if i not in body_joint_ids],
+                    dtype=torch.long,
+                    device=self.device,
                 )
             if len(self.body_joint_indices) != self.motion_lib_num_dof:
                 raise ValueError(
@@ -290,16 +294,6 @@ class TrackingCommand(CommandTerm):
                 dtype=torch.float32,
                 device=self.device,
             )
-            if self.extra_default_positions.numel() != self.extra_num_dof:
-                raise ValueError(
-                    f"Expected {self.extra_num_dof} extra default positions, got "
-                    f"{self.extra_default_positions.numel()}"
-                )
-            if self.extra_default_velocities.numel() != self.extra_num_dof:
-                raise ValueError(
-                    f"Expected {self.extra_num_dof} extra default velocities, got "
-                    f"{self.extra_default_velocities.numel()}"
-                )
 
         # Step 1: Select which motions to use
         if self.cfg.use_paired_motions:

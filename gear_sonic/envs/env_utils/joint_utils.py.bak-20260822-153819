@@ -1,4 +1,8 @@
-"""Robot-aware helpers for resolving policy and extra articulation joints."""
+"""Joint utility functions and constants for G1 robot.
+
+This module provides joint ordering constants and helper functions for mapping
+between motion library data and robot joints.
+"""
 
 import torch
 
@@ -53,7 +57,7 @@ G1_HAND_JOINTS = [
     "right_hand_thumb_2_joint",
 ]
 
-# Legacy G1 constants remain for upstream callers that explicitly request them.
+# Caches for joint indices
 _body_joint_indices_cache = {}
 _hand_joint_indices_cache = {}
 
@@ -65,35 +69,17 @@ def _get_joint_indices_by_names(asset, joint_names: list, cache: dict) -> torch.
         return cache[cache_key]
 
     robot_joint_names = asset.joint_names
-    missing = [name for name in joint_names if name not in robot_joint_names]
-    if missing:
-        raise ValueError(
-            f"Robot articulation is missing expected joints {missing}; "
-            f"available joints={robot_joint_names}"
-        )
-    if len(joint_names) != len(set(joint_names)):
-        raise ValueError(f"Expected joint list contains duplicates: {joint_names}")
-    indices = [robot_joint_names.index(name) for name in joint_names]
+    indices = [robot_joint_names.index(n) for n in joint_names if n in robot_joint_names]
     indices_tensor = torch.tensor(indices, dtype=torch.long, device=asset.device)
     cache[cache_key] = indices_tensor
     return indices_tensor
 
 
-def get_body_joint_indices(asset, body_joint_names: list[str]) -> torch.Tensor:
-    """Resolve the active robot's policy joints in the requested policy order."""
-    if not body_joint_names:
-        raise ValueError("body_joint_names must come from the active robot mapping")
-    return _get_joint_indices_by_names(asset, body_joint_names, _body_joint_indices_cache)
+def get_body_joint_indices(asset) -> torch.Tensor:
+    """Get indices of body joints (29 DOF) using G1_ISAACLab_ORDER."""
+    return _get_joint_indices_by_names(asset, G1_ISAACLab_ORDER, _body_joint_indices_cache)
 
 
-def get_hand_joint_indices(asset, hand_joint_names: list[str]) -> torch.Tensor:
-    """Resolve explicitly configured hand/extra joints."""
-    return _get_joint_indices_by_names(asset, hand_joint_names, _hand_joint_indices_cache)
-
-
-def get_extra_joint_indices(asset, body_joint_names: list[str]) -> torch.Tensor:
-    """Return every articulation joint not controlled by the body policy."""
-    body_indices = get_body_joint_indices(asset, body_joint_names)
-    body_index_set = set(body_indices.tolist())
-    extra_indices = [i for i in range(len(asset.joint_names)) if i not in body_index_set]
-    return torch.tensor(extra_indices, dtype=torch.long, device=asset.device)
+def get_hand_joint_indices(asset) -> torch.Tensor:
+    """Get indices of hand joints (14 DOF) using G1_HAND_JOINTS."""
+    return _get_joint_indices_by_names(asset, G1_HAND_JOINTS, _hand_joint_indices_cache)

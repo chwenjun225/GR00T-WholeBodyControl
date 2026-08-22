@@ -162,7 +162,7 @@ manager_env:
         adaptive_sampling:
           adp_samp_failure_rate_max_over_mean: 200
         motion_file: null
-        smpl_motion_file: data/bones_seed_smpl/extracted/smpl_filtered
+        smpl_motion_file: dummy
         smpl_y_up: true
         asset:
           assetFileName: "gr1t2_no_fingers.xml"

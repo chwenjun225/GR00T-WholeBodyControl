@@ -33,9 +33,11 @@ class IsaacLabMuJoCoConverter(ABC):
             - body transforms [..., num_dof, D]             -> reorder directly
             - rotation mats   [..., num_dof (+ 1), 3, 3]   -> same as above on dim -3
 
-        DOF/qpos tensors use DOF_MAPPINGS. Per-body position/rotation tensors
-        use BODY_MAPPINGS, which may differ when the kinematic tree contains
-        fixed or intermediate bodies.
+        Note: Body reordering for per-body transforms uses DOF_MAPPINGS (not
+        BODY_MAPPINGS) because each DOF link has exactly one parent body in G1,
+        so DOF order and DOF-body order are consistent by construction.  The
+        separate BODY_MAPPINGS include the root (pelvis) at index 0 and are used
+        only when the full 30-body ordering is needed.
         """
         if from_order == to_order:
             return data
@@ -62,17 +64,15 @@ class IsaacLabMuJoCoConverter(ABC):
             )
             num_bodies = data.shape[body_dim]
 
-            body_mapping = getattr(self, "BODY_MAPPINGS", {}).get((from_order, to_order))
-            if body_mapping is not None and num_bodies == len(body_mapping):
-                body_order = body_mapping
+            if num_bodies == self.num_dof + 1:
+                # Includes root at index 0 — keep root, reorder DOF bodies
+                body_order = [0] + [m + 1 for m in mapping]
             elif num_bodies == self.num_dof:
-                # Legacy per-DOF-link tensors without a root body.
                 body_order = mapping
             else:
                 raise ValueError(
                     f"Cannot detect format: last_dim={last_dim}, body_dim size={num_bodies}, "
-                    f"expected a {len(body_mapping) if body_mapping is not None else 'configured'} "
-                    "body mapping"
+                    f"expected num_dof+1={self.num_dof + 1} or num_dof={self.num_dof}"
                 )
 
             if body_dim == -2:
@@ -208,9 +208,9 @@ class GR1T2Converter(IsaacLabMuJoCoConverter):
     def __init__(self):
         from gear_sonic.envs.manager_env.robots.gr1t2 import (
             GR1T2_ISAACLAB_BODIES,
-            GR1T2_ISAACLAB_TO_MUJOCO_POLICY_BODY,
+            GR1T2_ISAACLAB_TO_MUJOCO_BODY,
             GR1T2_ISAACLAB_TO_MUJOCO_DOF,
-            GR1T2_MUJOCO_TO_ISAACLAB_POLICY_BODY,
+            GR1T2_MUJOCO_TO_ISAACLAB_BODY,
             GR1T2_MUJOCO_TO_ISAACLAB_DOF,
         )
         self.JOINT_NAMES = GR1T2_ISAACLAB_BODIES
@@ -219,14 +219,14 @@ class GR1T2Converter(IsaacLabMuJoCoConverter):
             ("mujoco", "isaaclab"): GR1T2_MUJOCO_TO_ISAACLAB_DOF,
         }
         self.BODY_MAPPINGS = {
-            ("isaaclab", "mujoco"): GR1T2_ISAACLAB_TO_MUJOCO_POLICY_BODY,
-            ("mujoco", "isaaclab"): GR1T2_MUJOCO_TO_ISAACLAB_POLICY_BODY,
+            ("isaaclab", "mujoco"): GR1T2_ISAACLAB_TO_MUJOCO_BODY,
+            ("mujoco", "isaaclab"): GR1T2_MUJOCO_TO_ISAACLAB_BODY,
         }
 
     VR_3POINTS_BODY_NAMES = [
-        "waist_roll_link", "left_hand_pitch_link", "right_hand_pitch_link"
+        "waist_roll_joint", "left_wrist_pitch_joint", "right_wrist_pitch_joint"
     ]
-    FOOT_BODY_NAMES = ["left_foot_roll_link", "right_foot_roll_link"]
+    FOOT_BODY_NAMES = ["left_ankle_roll_joint", "right_ankle_roll_joint"]
 
 
 def load_qpos_from_csv(csv_path: str) -> torch.Tensor:
