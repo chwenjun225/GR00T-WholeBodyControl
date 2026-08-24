@@ -11,7 +11,7 @@ ASSET_DIR = "gear_sonic/data/assets"
 _ASSET_DIR_ABS = Path(__file__).resolve().parents[3] / "data/assets"
 GR1T2_MJCF_PATH = _ASSET_DIR_ABS / "robot_description/mjcf/gr1t2_no_fingers.xml"
 GR1T2_URDF_PATH = (
-    _ASSET_DIR_ABS / "robot_description/urdf/gr1t2.urdf"
+    _ASSET_DIR_ABS / "robot_description/urdf/gr1t2/gr1t2.urdf"
 )
 
 GR1T2_MUJOCO_JOINTS = [
@@ -190,7 +190,7 @@ GR1T2_CFG = ArticulationCfg(
     spawn=sim_utils.UrdfFileCfg(
         fix_base=False,
         replace_cylinders_with_capsules=True,
-        asset_path=f"{ASSET_DIR}/robot_description/urdf/gr1t2.urdf",
+        asset_path=f"{ASSET_DIR}/robot_description/urdf/gr1t2/gr1t2.urdf",
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
