@@ -137,12 +137,10 @@ def _load_gr1t2_names():
 ) = _load_gr1t2_names()
 
 GR1T2_ISAACLAB_TO_MUJOCO_DOF = [
-    GR1T2_MUJOCO_JOINTS.index(name)
-    for name in GR1T2_ISAACLAB_JOINTS
+    GR1T2_ISAACLAB_JOINTS.index(name) for name in GR1T2_MUJOCO_JOINTS
 ]
 GR1T2_MUJOCO_TO_ISAACLAB_DOF = [
-    GR1T2_ISAACLAB_JOINTS.index(name)
-    for name in GR1T2_MUJOCO_JOINTS
+    GR1T2_MUJOCO_JOINTS.index(name) for name in GR1T2_ISAACLAB_JOINTS
 ]
 GR1T2_ISAACLAB_TO_MUJOCO_POLICY_BODY = [
     GR1T2_ISAACLAB_BODIES.index(name) for name in GR1T2_MUJOCO_BODIES

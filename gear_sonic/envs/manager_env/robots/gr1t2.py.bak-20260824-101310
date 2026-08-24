@@ -54,42 +54,6 @@ GR1T2_MUJOCO_JOINTS = [
     "head_yaw_joint",
 ]
 
-
-GR1T2_ISAACLAB_JOINTS = [
-    "left_hip_roll_joint",
-    "right_hip_roll_joint",
-    "waist_yaw_joint",
-    "left_hip_yaw_joint",
-    "right_hip_yaw_joint",
-    "waist_pitch_joint",
-    "left_hip_pitch_joint",
-    "right_hip_pitch_joint",
-    "waist_roll_joint",
-    "left_knee_pitch_joint",
-    "right_knee_pitch_joint",
-    "head_roll_joint",
-    "left_shoulder_pitch_joint",
-    "right_shoulder_pitch_joint",
-    "left_ankle_pitch_joint",
-    "right_ankle_pitch_joint",
-    "head_pitch_joint",
-    "left_shoulder_roll_joint",
-    "right_shoulder_roll_joint",
-    "left_ankle_roll_joint",
-    "right_ankle_roll_joint",
-    "head_yaw_joint",
-    "left_shoulder_yaw_joint",
-    "right_shoulder_yaw_joint",
-    "left_elbow_pitch_joint",
-    "right_elbow_pitch_joint",
-    "left_wrist_yaw_joint",
-    "right_wrist_yaw_joint",
-    "left_wrist_roll_joint",
-    "right_wrist_roll_joint",
-    "left_wrist_pitch_joint",
-    "right_wrist_pitch_joint",
-]
-
 def _load_gr1t2_names():
     urdf_root = ETree.parse(GR1T2_URDF_PATH).getroot()
     urdf_joints = {joint.get("name"): joint for joint in urdf_root.findall("joint")}
@@ -98,12 +62,10 @@ def _load_gr1t2_names():
         raise ValueError(f"GR1T2 URDF is missing policy joints: {missing}")
 
     policy_set = set(GR1T2_MUJOCO_JOINTS)
-
-    # IMPORTANT:
-    # IsaacLab articulation order is NOT assumed to equal textual URDF order.
-    # Use the verified runtime articulation joint order.
-    isaaclab_joints = list(GR1T2_ISAACLAB_JOINTS)
-
+    isaaclab_joints = [
+        joint.get("name") for joint in urdf_root.findall("joint")
+        if joint.get("name") in policy_set
+    ]
     isaaclab_bodies = ["base_link"] + [
         urdf_joints[name].find("child").get("link") for name in isaaclab_joints
     ]
@@ -137,12 +99,10 @@ def _load_gr1t2_names():
 ) = _load_gr1t2_names()
 
 GR1T2_ISAACLAB_TO_MUJOCO_DOF = [
-    GR1T2_MUJOCO_JOINTS.index(name)
-    for name in GR1T2_ISAACLAB_JOINTS
+    GR1T2_ISAACLAB_JOINTS.index(name) for name in GR1T2_MUJOCO_JOINTS
 ]
 GR1T2_MUJOCO_TO_ISAACLAB_DOF = [
-    GR1T2_ISAACLAB_JOINTS.index(name)
-    for name in GR1T2_MUJOCO_JOINTS
+    GR1T2_MUJOCO_JOINTS.index(name) for name in GR1T2_ISAACLAB_JOINTS
 ]
 GR1T2_ISAACLAB_TO_MUJOCO_POLICY_BODY = [
     GR1T2_ISAACLAB_BODIES.index(name) for name in GR1T2_MUJOCO_BODIES
