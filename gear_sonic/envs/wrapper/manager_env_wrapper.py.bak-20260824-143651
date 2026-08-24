@@ -1955,12 +1955,8 @@ class ManagerEnvWrapper:
         self.motion_command.robot.write_joint_state_to_sim(
             joint_pos, joint_vel, env_ids=self._replay_env_ids
         )
-        # MotionLib stores root quaternion as wxyz, while the Newton backend
-        # expects root pose quaternion as xyzw.
-        root_quat_xyzw = root_quat[:, [1, 2, 3, 0]]
-
         self.motion_command.robot.write_root_state_to_sim(
-            torch.cat([root_pos, root_quat_xyzw, root_lin_vel, root_ang_vel], dim=-1),
+            torch.cat([root_pos, root_quat, root_lin_vel, root_ang_vel], dim=-1),
             env_ids=self._replay_env_ids,
         )
 

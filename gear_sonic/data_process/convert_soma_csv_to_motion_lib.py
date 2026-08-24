@@ -57,7 +57,7 @@ GR1T2_MJCF_PATH = (
 )
 GR1T2_URDF_PATH = (
     Path(__file__).resolve().parents[1]
-    / "data/assets/robot_description/urdf/gr1t2/gr1t2_fourier_hand_6dof.urdf"
+    / "data/assets/robot_description/urdf/gr1t2/gr1t2.urdf"
 )
 
 # SONIC's external MuJoCo/CSV order. Keep this aligned by name with
