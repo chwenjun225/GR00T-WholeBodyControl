@@ -7,12 +7,11 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 import isaaclab.sim as sim_utils
 
-ASSET_DIR = "gear_sonic/data/assets"
-_ASSET_DIR_ABS = Path(__file__).resolve().parents[3] / "data/assets"
-GR1T2_MJCF_PATH = _ASSET_DIR_ABS / "robot_description/mjcf/gr1t2_no_fingers.xml"
-GR1T2_URDF_PATH = (
-    _ASSET_DIR_ABS / "robot_description/urdf/gr1t2.urdf"
-)
+_CIBO_ROOT = Path(__file__).resolve().parents[6]
+_GR1T2_ASSET_DIR = _CIBO_ROOT / "contents/assets/robots/humanoid/gr1t2"
+
+GR1T2_MJCF_PATH = _GR1T2_ASSET_DIR / "mjcf/gr1t2_no_fingers.xml"
+GR1T2_URDF_PATH = _GR1T2_ASSET_DIR / "urdf/gr1t2.urdf"
 
 GR1T2_MUJOCO_JOINTS = [
     "left_hip_roll_joint",
@@ -190,7 +189,7 @@ GR1T2_CFG = ArticulationCfg(
     spawn=sim_utils.UrdfFileCfg(
         fix_base=False,
         replace_cylinders_with_capsules=True,
-        asset_path=f"{ASSET_DIR}/robot_description/urdf/gr1t2.urdf",
+        asset_path=str(GR1T2_URDF_PATH),
         activate_contact_sensors=True,
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
             disable_gravity=False,
