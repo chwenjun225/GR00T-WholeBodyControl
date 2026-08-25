@@ -45,36 +45,43 @@ import argparse
 import os
 from pathlib import Path
 import sys
+import warnings
 import xml.etree.ElementTree as ETree
 
 import joblib
 import numpy as np
 from scipy.spatial import transform
 
-GR1T2_MJCF_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "data/assets/robot_description/mjcf/gr1t2_no_fingers.xml"
-)
-GR1T2_URDF_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "data/assets/robot_description/urdf/gr1t2/gr1t2.urdf"
-)
+_CIBO_ROOT = Path(__file__).resolve().parents[4]
+_GR1T2_ASSET_DIR = _CIBO_ROOT / "contents/assets/robots/humanoid/gr1t2"
+GR1T2_MJCF_PATH = _GR1T2_ASSET_DIR / "mjcf/gr1t2_no_fingers.xml"
+GR1T2_URDF_PATH = _GR1T2_ASSET_DIR / "urdf/gr1t2.urdf"
 
-# SONIC's external MuJoCo/CSV order. Keep this aligned by name with
-# envs/manager_env/robots/gr1t2.py; the XML hierarchy has a different order.
+# Newton emits ``joint_q[7:]`` in this MJCF tree/coordinate order. Keep this
+# aligned with envs/manager_env/robots/gr1t2.py and validate it against the XML
+# below so a mislabeled CSV cannot silently corrupt the motion again.
 BODY_JOINTS_MUJOCO = [
     "left_hip_roll_joint", "left_hip_yaw_joint", "left_hip_pitch_joint",
     "left_knee_pitch_joint", "left_ankle_pitch_joint", "left_ankle_roll_joint",
     "right_hip_roll_joint", "right_hip_yaw_joint", "right_hip_pitch_joint",
     "right_knee_pitch_joint", "right_ankle_pitch_joint", "right_ankle_roll_joint",
     "waist_yaw_joint", "waist_pitch_joint", "waist_roll_joint",
-    "head_pitch_joint", "head_roll_joint", "head_yaw_joint",
     "left_shoulder_pitch_joint", "left_shoulder_roll_joint",
     "left_shoulder_yaw_joint", "left_elbow_pitch_joint",
     "left_wrist_yaw_joint", "left_wrist_roll_joint", "left_wrist_pitch_joint",
     "right_shoulder_pitch_joint", "right_shoulder_roll_joint",
     "right_shoulder_yaw_joint", "right_elbow_pitch_joint",
     "right_wrist_yaw_joint", "right_wrist_roll_joint", "right_wrist_pitch_joint",
+    "head_roll_joint", "head_pitch_joint", "head_yaw_joint",
+]
+
+# SOMA CSVs produced before the GR1T2 schema fix contain Newton's correct
+# positional joint_q values under these incorrect column labels. Accept this
+# exact legacy signature and read its 32 joint columns positionally.
+LEGACY_BODY_JOINTS_CSV = [
+    *BODY_JOINTS_MUJOCO[:15],
+    "head_pitch_joint", "head_roll_joint", "head_yaw_joint",
+    *BODY_JOINTS_MUJOCO[15:29],
 ]
 
 _POLICY_JOINT_SET = set(BODY_JOINTS_MUJOCO)
@@ -147,11 +154,16 @@ BONES_CSV_HEADER = [
     "root_rotateX", "root_rotateY", "root_rotateZ",
     *BONES_CSV_JOINT_NAMES,
 ]
+LEGACY_BONES_CSV_HEADER = [
+    *BONES_CSV_HEADER[:7],
+    *(f"{name}_dof" for name in LEGACY_BODY_JOINTS_CSV),
+]
 
 assert NUM_DOF == 32
 assert len(BODY_JOINTS_ISAACLAB) == NUM_DOF
 assert len(XML_JOINTS) == NUM_DOF
 assert set(XML_JOINTS) == set(BODY_JOINTS_MUJOCO) == set(BODY_JOINTS_ISAACLAB)
+assert XML_JOINTS == BODY_JOINTS_MUJOCO
 assert sorted(MJ_TO_IL.tolist()) == list(range(NUM_DOF))
 assert sorted(MJ_TO_XML.tolist()) == list(range(NUM_DOF))
 assert sorted(XML_TO_MJ.tolist()) == list(range(NUM_DOF))
@@ -159,6 +171,9 @@ assert DOF_AXIS.shape == (NUM_DOF, 3)
 assert DOF_RANGE.shape == (NUM_DOF, 2)
 assert np.isfinite(DOF_AXIS).all() and np.all(np.linalg.norm(DOF_AXIS, axis=1) > 0)
 assert len(BONES_CSV_HEADER) == 39
+assert len(LEGACY_BONES_CSV_HEADER) == 39
+
+_LEGACY_HEADER_WARNED = False
 
 
 def load_bones_csv(csv_path: str) -> dict:
@@ -171,10 +186,10 @@ def load_bones_csv(csv_path: str) -> dict:
 
     data = pd.read_csv(csv_path)
     actual_header = data.columns.tolist()
-    if actual_header != BONES_CSV_HEADER:
+    if actual_header not in (BONES_CSV_HEADER, LEGACY_BONES_CSV_HEADER):
         raise ValueError(
-            f"GR1T2 CSV header mismatch for {csv_path}: expected exactly "
-            f"{BONES_CSV_HEADER}, got {actual_header}"
+            f"GR1T2 CSV header mismatch for {csv_path}: expected the current or "
+            f"known legacy SOMA schema, got {actual_header}"
         )
     T = len(data)
 
@@ -207,8 +222,22 @@ def load_bones_csv(csv_path: str) -> dict:
     # Convert xyzw → wxyz for body_quat_w format
     root_quat_wxyz = root_quat_xyzw[:, [3, 0, 1, 2]]
 
-    # Joint DOFs: degrees → radians, already in MuJoCo/MJCF actuator order
-    joint_pos_mj = np.deg2rad(data[BONES_CSV_JOINT_NAMES].values).astype(np.float32)
+    # Joint DOFs: degrees → radians in Newton/MJCF coordinate order. Legacy
+    # files already carry this positional order; only their labels were wrong.
+    if actual_header == LEGACY_BONES_CSV_HEADER:
+        global _LEGACY_HEADER_WARNED
+        if not _LEGACY_HEADER_WARNED:
+            warnings.warn(
+                "Reading legacy GR1T2 SOMA CSV columns positionally because their "
+                "head/arm labels are known to be incorrect.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            _LEGACY_HEADER_WARNED = True
+        joint_values = data.iloc[:, 7:].values
+    else:
+        joint_values = data[BONES_CSV_JOINT_NAMES].values
+    joint_pos_mj = np.deg2rad(joint_values).astype(np.float32)
     if joint_pos_mj.shape != (T, NUM_DOF):
         raise ValueError(
             f"GR1T2 DOF shape mismatch for {csv_path}: expected {(T, NUM_DOF)}, "

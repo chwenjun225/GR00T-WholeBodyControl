@@ -24,6 +24,11 @@ except ImportError:
     VISUALIZATION_AVAILABLE = False
 
 
+def _wxyz_to_sim_xyzw(quat: torch.Tensor) -> torch.Tensor:
+    """Convert SONIC/MotionLib quaternions to the Isaac Lab simulation convention."""
+    return quat[..., [1, 2, 3, 0]]
+
+
 class ManagerEnvWrapper:
     def __init__(self, env: "ManagerBasedEnv", config):
         env.wrapper = self
@@ -86,6 +91,10 @@ class ManagerEnvWrapper:
         self._body_joint_indices = None
         self._hand_joint_indices = None
         self._setup_replay_joint_indices()  # Setup for replay mode
+        self._replay_validate_kinematics = self.config.get(
+            "replay_validate_kinematics", False
+        )
+        self._replay_validation_done = False
 
         # Initialize finger primitive support
         self._use_finger_primitive = self.config.get("use_finger_primitive", False)
@@ -1247,6 +1256,11 @@ class ManagerEnvWrapper:
 
         # Store custom origins
         self._replay_custom_origins = custom_origins
+        # Reference getters and debug markers use scene.env_origins. Keep that
+        # shared origin tensor synchronized with the replay-only grid; otherwise
+        # multi-environment robots move to custom origins while their markers
+        # remain on the environment's original layout.
+        self.env.scene.env_origins.copy_(custom_origins)
 
         logger.info(
             f"Grid bounds: X=[{custom_origins[:, 0].min():.1f}, {custom_origins[:, 0].max():.1f}], "
@@ -1472,6 +1486,16 @@ class ManagerEnvWrapper:
         self._replay_loop = loop
         self._replay_num_steps_per_env = num_steps_per_env
         self._replay_max_num_steps = max_num_steps
+
+        # TrackingCommand owns the reference clock used by debug markers and
+        # reference properties. Replay previously advanced only the wrapper's
+        # private clock, so the robot and yellow markers displayed different
+        # frames (and potentially different random start offsets).
+        self.motion_command.set_motion_state(
+            self._replay_motion_ids,
+            self._replay_time_steps,
+            motion_start_time_steps=torch.zeros_like(self._replay_time_steps),
+        )
 
         # Pre-load table metadata from pkl files for ALL motions (per-env)
         # This supports multi-motion replay where each env can have different table positions
@@ -1955,9 +1979,9 @@ class ManagerEnvWrapper:
         self.motion_command.robot.write_joint_state_to_sim(
             joint_pos, joint_vel, env_ids=self._replay_env_ids
         )
-        # MotionLib stores root quaternion as wxyz, while the Newton backend
-        # expects root pose quaternion as xyzw.
-        root_quat_xyzw = root_quat[:, [1, 2, 3, 0]]
+        # MotionLib stores root quaternion as wxyz, while Isaac Lab state
+        # writers use xyzw for both the PhysX and Newton backends.
+        root_quat_xyzw = _wxyz_to_sim_xyzw(root_quat)
 
         self.motion_command.robot.write_root_state_to_sim(
             torch.cat([root_pos, root_quat_xyzw, root_lin_vel, root_ang_vel], dim=-1),
@@ -1991,7 +2015,9 @@ class ManagerEnvWrapper:
             for obj_idx in range(object_root_pos.shape[1]):
                 obj_pos = object_root_pos[:, obj_idx, :]
                 obj_quat = object_root_quat[:, obj_idx, :]
-                object_root_pose = torch.cat([obj_pos, obj_quat], dim=-1)
+                object_root_pose = torch.cat(
+                    [obj_pos, _wxyz_to_sim_xyzw(obj_quat)], dim=-1
+                )
 
                 self.env.scene["object"].write_root_pose_to_sim(
                     object_root_pose, env_ids=self._replay_env_ids
@@ -2029,7 +2055,9 @@ class ManagerEnvWrapper:
             else:
                 table_pos = table_pos + self.env.scene.env_origins[self._replay_env_ids]
 
-            table_root_pose = torch.cat([table_pos, table_quat], dim=-1)
+            table_root_pose = torch.cat(
+                [table_pos, _wxyz_to_sim_xyzw(table_quat)], dim=-1
+            )
             self.env.scene["table"].write_root_pose_to_sim(
                 table_root_pose, env_ids=self._replay_env_ids
             )
@@ -2044,6 +2072,72 @@ class ManagerEnvWrapper:
             self._update_contact_center_visualization()
 
         self.env.sim.forward()
+        self._validate_replay_kinematics_once(joint_pos, root_quat)
+
+    def _validate_replay_kinematics_once(self, expected_joint_pos, expected_root_quat_wxyz):
+        """Report name-aligned replay errors after the simulator has consumed state writes."""
+        if not self._replay_validate_kinematics or self._replay_validation_done:
+            return
+
+        robot = self.motion_command.robot
+        robot.update(0.0)
+        env_ids = self._replay_env_ids
+        actual_joint_pos = robot.data.joint_pos[env_ids]
+        joint_error = torch.abs(actual_joint_pos - expected_joint_pos)
+
+        reference_body_pos = self._motion_lib.get_body_pos_w(
+            self._replay_motion_ids, self._replay_time_steps
+        )
+        if hasattr(self, "_replay_custom_origins"):
+            reference_body_pos = reference_body_pos + self._replay_custom_origins[env_ids, None, :]
+        else:
+            reference_body_pos = reference_body_pos + self.env.scene.env_origins[env_ids, None, :]
+        actual_body_pos = robot.data.body_pos_w[env_ids][:, self.motion_command.body_indexes]
+        body_error = torch.linalg.vector_norm(actual_body_pos - reference_body_pos, dim=-1)
+        marker_body_error = torch.linalg.vector_norm(
+            self.motion_command.body_pos_w[env_ids] - reference_body_pos, dim=-1
+        )
+
+        reference_body_quat = _wxyz_to_sim_xyzw(
+            self._motion_lib.get_body_quat_w(
+                self._replay_motion_ids, self._replay_time_steps
+            )
+        )
+        actual_body_quat = robot.data.body_quat_w[env_ids][:, self.motion_command.body_indexes]
+        body_quat_dot = torch.abs(torch.sum(actual_body_quat * reference_body_quat, dim=-1))
+        body_quat_error = 2.0 * torch.acos(body_quat_dot.clamp(max=1.0))
+        reward_point_error = torch.linalg.vector_norm(
+            self.motion_command.robot_reward_point_body_pos_w[env_ids]
+            - self.motion_command.reward_point_body_pos_w[env_ids],
+            dim=-1,
+        )
+
+        actual_root_quat = robot.data.root_quat_w[env_ids]
+        root_quat_dot = torch.abs(
+            torch.sum(actual_root_quat * _wxyz_to_sim_xyzw(expected_root_quat_wxyz), dim=-1)
+        )
+
+        worst_body_error, worst_body_index = body_error.max(dim=1)
+        logger.info(
+            "Replay validation: max_joint_error={}, max_body_error={}, "
+            "max_marker_clock_error={}, max_body_quat_error_rad={}, "
+            "max_reward_point_error={}, root_quat_abs_dot={}",
+            joint_error.max(dim=1).values.detach().cpu().tolist(),
+            worst_body_error.detach().cpu().tolist(),
+            marker_body_error.max(dim=1).values.detach().cpu().tolist(),
+            body_quat_error.max(dim=1).values.detach().cpu().tolist(),
+            reward_point_error.max(dim=1).values.detach().cpu().tolist(),
+            root_quat_dot.detach().cpu().tolist(),
+        )
+        for env_index in range(min(len(env_ids), 4)):
+            body_index = int(worst_body_index[env_index])
+            logger.info(
+                "Replay validation env {} worst body: {} error={:.6f}m",
+                int(env_ids[env_index]),
+                self.motion_command.cfg.body_names[body_index],
+                float(worst_body_error[env_index]),
+            )
+        self._replay_validation_done = True
 
     def step_replay(self):
         """Step the replay forward for all environments. Call this in a loop to animate the motions.
