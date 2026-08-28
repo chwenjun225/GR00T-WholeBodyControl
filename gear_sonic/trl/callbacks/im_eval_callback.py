@@ -140,10 +140,14 @@ class ImEvalCallback(TrainerCallback):
                 for kk, vv in v.items():
                     if isinstance(vv, np.ndarray):
                         metrics_json[k][kk] = vv.tolist()
+                    elif isinstance(vv, np.generic):
+                        metrics_json[k][kk] = vv.item()
                     else:
                         metrics_json[k][kk] = vv
             elif isinstance(v, np.ndarray):
                 metrics_json[k] = v.tolist()
+            elif isinstance(v, np.generic):
+                metrics_json[k] = v.item()
             else:
                 metrics_json[k] = v
 
@@ -289,6 +293,10 @@ class ImEvalCallback(TrainerCallback):
         self.pred_rot, self.pred_rot_all = [], []
         self.sampled_motion_idx = []
         self.time_eval_start = time.time()
+        self._anchor_start_ref = None
+        self._anchor_start_robot = None
+        self._anchor_max_ref_displacement = None
+        self._anchor_robot_at_max_ref = None
 
         # Object tracking metrics
         self._has_object = (
@@ -340,6 +348,22 @@ class ImEvalCallback(TrainerCallback):
     def _post_eval_env_step(self, actor_state):
         step = actor_state["step"]
         actor_state["end_eval"] = False
+
+        ref_anchor = self.env.motion_command.anchor_pos_w.detach()
+        robot_anchor = self.env.motion_command.robot_anchor_pos_w.detach()
+        if self._anchor_start_ref is None:
+            self._anchor_start_ref = ref_anchor.clone()
+            self._anchor_start_robot = robot_anchor.clone()
+            self._anchor_max_ref_displacement = torch.zeros(
+                ref_anchor.shape[0], device=ref_anchor.device
+            )
+            self._anchor_robot_at_max_ref = robot_anchor.clone()
+
+        ref_displacement_xy = ref_anchor[:, :2] - self._anchor_start_ref[:, :2]
+        ref_displacement_norm = ref_displacement_xy.norm(dim=-1)
+        farther = ref_displacement_norm > self._anchor_max_ref_displacement
+        self._anchor_max_ref_displacement[farther] = ref_displacement_norm[farther]
+        self._anchor_robot_at_max_ref[farther] = robot_anchor[farther]
 
         if "ref_body_pos_extend" in self.env.extras:
             self.gt_pos.append(self.env.extras["ref_body_pos_extend"].cpu().numpy())
@@ -499,6 +523,13 @@ class ImEvalCallback(TrainerCallback):
             self.sampled_motion_idx.append(env_motion_ids)
             self.env_eval_loop_idx += 1
 
+            robot_displacement = self._anchor_robot_at_max_ref - self._anchor_start_robot
+            print(
+                "Anchor XY displacement at farthest reference frame "
+                f"ref_norm={self._anchor_max_ref_displacement.cpu().tolist()} "
+                f"robot={robot_displacement[:, :2].cpu().tolist()} "
+            )
+
             if self.env_eval_loop_idx >= self.num_total_env_eval_loops:
                 if self.render_only:
                     print("Rendering only. Reached the end of the evaluation loop.")
@@ -544,54 +575,41 @@ class ImEvalCallback(TrainerCallback):
                 ]
                 """
 
-                # Define subsets
-                # 6 + 3 + 5 = 14
+                # Derive metric subsets from the embodiment's configured body
+                # names. The previous G1-only names made evaluation crash for
+                # GR1T2 after an otherwise successful rollout.
                 legs_subset_names = [
-                    "left_hip_roll_link",
-                    "left_knee_link",
-                    "left_ankle_roll_link",
-                    "right_hip_roll_link",
-                    "right_knee_link",
-                    "right_ankle_roll_link",
+                    name
+                    for name in body_names
+                    if any(
+                        token in name
+                        for token in ("hip", "knee", "ankle", "thigh", "shank", "foot")
+                    )
                 ]
-                # NOTE use torso_link instead of head for vr_3points_subset_names
+                command_cfg = self.env.motion_command.cfg
                 vr_3points_subset_names = [
-                    "torso_link",
-                    "left_wrist_yaw_link",
-                    "right_wrist_yaw_link",
+                    name
+                    for name in getattr(command_cfg, "vr_3point_body", [])
+                    if name in body_names
                 ]
+                foot_subset_names = [
+                    name
+                    for name in getattr(command_cfg, "feet_body_names", [])
+                    if name in body_names
+                ]
+                if not foot_subset_names:
+                    foot_subset_names = [
+                        name for name in body_names if "foot" in name or "ankle" in name
+                    ]
                 other_upper_bodies_subset_names = [
-                    "pelvis",
-                    "left_shoulder_roll_link",
-                    "left_elbow_link",
-                    "right_shoulder_roll_link",
-                    "right_elbow_link",
-                ]
-
-                foot_subset_names = ["left_ankle_roll_link", "right_ankle_roll_link"]
-
-                # Get indices for subsets
-                legs_indices = [body_names.index(name) for name in legs_subset_names]
-                vr_3points_indices = [body_names.index(name) for name in vr_3points_subset_names]
-                other_upper_bodies_indices = [
-                    body_names.index(name) for name in other_upper_bodies_subset_names
-                ]
-                foot_indices = [body_names.index(name) for name in foot_subset_names]
-                # Extract subset data
-                pred_pos_legs = [p[:, legs_indices, :] for p in self.pred_pos_all]
-                gt_pos_legs = [g[:, legs_indices, :] for g in self.gt_pos_all]
-
-                pred_pos_foot = [p[:, foot_indices, :] for p in self.pred_pos_all]
-                gt_pos_foot = [g[:, foot_indices, :] for g in self.gt_pos_all]
-
-                pred_pos_vr_3points = [p[:, vr_3points_indices, :] for p in self.pred_pos_all]
-                gt_pos_vr_3points = [g[:, vr_3points_indices, :] for g in self.gt_pos_all]
-
-                pred_pos_other_upper_bodies = [
-                    p[:, other_upper_bodies_indices, :] for p in self.pred_pos_all
-                ]
-                gt_pos_other_upper_bodies = [
-                    g[:, other_upper_bodies_indices, :] for g in self.gt_pos_all
+                    name
+                    for name in body_names
+                    if name not in legs_subset_names
+                    and name not in vr_3points_subset_names
+                    and any(
+                        token in name
+                        for token in ("pelvis", "base", "shoulder", "elbow", "upper_arm", "lower_arm")
+                    )
                 ]
 
                 # Lazy import to avoid cffi version conflict with IsaacSim
@@ -600,27 +618,27 @@ class ImEvalCallback(TrainerCallback):
                 metrics_all = compute_metrics_lite(
                     self.pred_pos_all, self.gt_pos_all, concatenate=False
                 )  # list of length N_env
-                metrics_legs = compute_metrics_lite(pred_pos_legs, gt_pos_legs, concatenate=False)
-                metrics_vr_3points = compute_metrics_lite(
-                    pred_pos_vr_3points, gt_pos_vr_3points, concatenate=False
-                )
-                metrics_other_upper_bodies = compute_metrics_lite(
-                    pred_pos_other_upper_bodies, gt_pos_other_upper_bodies, concatenate=False
-                )
-                metrics_foot = compute_metrics_lite(pred_pos_foot, gt_pos_foot, concatenate=False)
 
-                # Rename keys for subset metrics
-                metrics_legs = {f"{k}_legs": v for k, v in metrics_legs.items()}
-                metrics_vr_3points = {f"{k}_vr_3points": v for k, v in metrics_vr_3points.items()}
-                metrics_other_upper_bodies = {
-                    f"{k}_other_upper_bodies": v for k, v in metrics_other_upper_bodies.items()
-                }
-                metrics_foot = {f"{k}_foot": v for k, v in metrics_foot.items()}
+                def compute_subset_metrics(subset_names, suffix):
+                    if not subset_names:
+                        print(f"Skipping empty evaluation subset: {suffix}")
+                        return {}
+                    indices = [body_names.index(name) for name in subset_names]
+                    pred = [positions[:, indices, :] for positions in self.pred_pos_all]
+                    gt = [positions[:, indices, :] for positions in self.gt_pos_all]
+                    subset_metrics = compute_metrics_lite(pred, gt, concatenate=False)
+                    return {f"{key}_{suffix}": value for key, value in subset_metrics.items()}
 
-                metrics_all.update(metrics_legs)
-                metrics_all.update(metrics_vr_3points)
-                metrics_all.update(metrics_other_upper_bodies)
-                metrics_all.update(metrics_foot)
+                metrics_all.update(compute_subset_metrics(legs_subset_names, "legs"))
+                metrics_all.update(
+                    compute_subset_metrics(vr_3points_subset_names, "vr_3points")
+                )
+                metrics_all.update(
+                    compute_subset_metrics(
+                        other_upper_bodies_subset_names, "other_upper_bodies"
+                    )
+                )
+                metrics_all.update(compute_subset_metrics(foot_subset_names, "foot"))
 
                 metrics_all_sum = {
                     k: torch.tensor(
@@ -847,6 +865,10 @@ class ImEvalCallback(TrainerCallback):
                 return actor_state
 
             self.env.forward_motion_samples(self.args.global_rank, self.args.world_size)
+            self._anchor_start_ref = None
+            self._anchor_start_robot = None
+            self._anchor_max_ref_displacement = None
+            self._anchor_robot_at_max_ref = None
             self.terminate_state = torch.zeros(self.env.num_envs, device=self.device)
             self.progress_state = torch.zeros(self.env.num_envs, device=self.env.device)
 

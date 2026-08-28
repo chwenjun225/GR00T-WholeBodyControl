@@ -144,6 +144,23 @@ def create_manager_env(config, device, args_cli):
     env_instance_cfg.seed = config.seed
     env_instance_cfg.sim.device = device
     env_instance_cfg.config["headless"] = args_cli.headless
+
+    requested_visualizers = getattr(args_cli, "visualizer", None) or []
+    if isinstance(requested_visualizers, str):
+        requested_visualizers = [requested_visualizers]
+    if not args_cli.headless and "kit" in requested_visualizers:
+        # The minimal isaaclab.python.kit experience does not reliably provide
+        # an active viewport.  Give the Kit visualizer its own viewport so GUI
+        # evaluation is visible instead of leaving an empty application window.
+        from isaaclab_visualizers.kit import KitVisualizerCfg
+
+        env_instance_cfg.sim.visualizer_cfgs = KitVisualizerCfg(
+            create_viewport=True,
+            viewport_name="SONIC GR1T2",
+            eye=tuple(env_instance_cfg.viewer.eye),
+            lookat=tuple(env_instance_cfg.viewer.lookat),
+        )
+
     env = ManagerBasedRLEnv(
         cfg=env_instance_cfg, render_mode="rgb_array" if not args_cli.headless else None
     )

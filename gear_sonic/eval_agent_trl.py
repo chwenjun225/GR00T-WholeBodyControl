@@ -49,13 +49,45 @@ from loguru import logger
 import omegaconf
 import yaml
 
-from gear_sonic import train_agent_trl
-from gear_sonic.trl.utils import common as trl_utils_common
-from gear_sonic.trl.utils import scheduler
-from gear_sonic.utils import common as rl_utils_common
-from gear_sonic.utils import config_utils, obs_utils
+from gear_sonic.utils import config_utils
 
 config_utils.register_rl_resolvers()
+
+
+def _log_composed_scene_alignment(env) -> None:
+    """Log world-space anchors used to align an authored scene with env_0."""
+    from pxr import Usd, UsdGeom
+
+    manager_env = env.env
+    stage = manager_env.sim.stage
+    xform_cache = UsdGeom.XformCache(Usd.TimeCode.Default())
+    bbox_cache = UsdGeom.BBoxCache(
+        Usd.TimeCode.Default(),
+        [UsdGeom.Tokens.default_, UsdGeom.Tokens.render],
+        useExtentsHint=True,
+    )
+
+    paths = (
+        "/World/envs/env_0/Robot",
+        "/World/CiboScene",
+        "/World/CiboScene/Environment/small_warehouse_digital_twin",
+        "/World/CiboScene/Environment/small_warehouse_digital_twin/Structure/floor",
+        "/World/CiboScene/Objects",
+    )
+    for prim_path in paths:
+        prim = stage.GetPrimAtPath(prim_path)
+        if not prim.IsValid():
+            logger.warning(f"Scene alignment prim is missing: {prim_path}")
+            continue
+        position = xform_cache.GetLocalToWorldTransform(prim).ExtractTranslation()
+        world_range = bbox_cache.ComputeWorldBound(prim).ComputeAlignedRange()
+        position_values = tuple(round(float(value), 4) for value in position)
+        bbox_min = tuple(round(float(value), 4) for value in world_range.GetMin())
+        bbox_max = tuple(round(float(value), 4) for value in world_range.GetMax())
+        logger.info(
+            f"Scene alignment {prim_path}: position={position_values} "
+            f"bbox_min={bbox_min} bbox_max={bbox_max}"
+        )
 
 
 @hydra.main(config_path="config", config_name="base_eval")
@@ -145,6 +177,28 @@ def main(override_config: omegaconf.OmegaConf):
             if termination in config.manager_env.terminations:
                 config.manager_env.terminations.pop(termination)
 
+        if config.get("deterministic_eval", False):
+            # Domain randomization is useful while training, but it obscures whether
+            # an unstable rollout comes from the checkpoint or from the sampled
+            # robot/ground properties. EventCfg fields default to None, so removing
+            # the composed terms restores the nominal GR1T2 model for evaluation.
+            event_names = [key for key in config.manager_env.events if key != "_target_"]
+            for event_name in event_names:
+                config.manager_env.events.pop(event_name)
+
+            corrupted_groups = []
+            for group_name, group_cfg in config.manager_env.observations.items():
+                if group_name == "_target_" or not isinstance(group_cfg, omegaconf.DictConfig):
+                    continue
+                if "enable_corruption" in group_cfg:
+                    group_cfg.enable_corruption = False
+                    corrupted_groups.append(group_name)
+
+            logger.info(
+                "Deterministic evaluation enabled: disabled events "
+                f"{event_names} and observation corruption for {corrupted_groups}"
+            )
+
     use_encoder = config.get("use_encoder", None)
     if use_encoder is not None:
         encoder_sample_probs = config.manager_env.commands.motion.encoder_sample_probs
@@ -157,30 +211,6 @@ def main(override_config: omegaconf.OmegaConf):
 
     simulator_type = "IsaacSim"
     env_config = config.manager_env
-
-    import datetime as dt
-
-    import accelerate
-    import torch  # noqa: E402, RUF100
-
-    kwargs = accelerate.InitProcessGroupKwargs(timeout=dt.timedelta(seconds=6000))
-    accelerator = accelerate.Accelerator(kwargs_handlers=[kwargs])
-
-    device = str(accelerator.device)
-    if accelerator.device.type == "cuda":
-        try:
-            torch.cuda.set_device(accelerator.local_process_index)
-        except Exception:  # noqa: S110, BLE001
-            pass
-
-    device = str(accelerator.device)
-    config.multi_gpu = accelerator.num_processes > 1
-    if config.multi_gpu:
-        config.global_rank = accelerator.process_index
-        config.seed += accelerator.process_index
-        config.algo.config.global_rank = accelerator.process_index
-        config.algo.config.world_size = accelerator.num_processes
-    rl_utils_common.seeding(config.seed)
 
     def _pick_display_gpu_index(default_idx: int = 0) -> int:
         try:
@@ -228,9 +258,18 @@ def main(override_config: omegaconf.OmegaConf):
         ) or env_config.config.get("enable_cameras", False)
 
         args_cli.headless = config.headless
-        args_cli.multi_gpu = config.multi_gpu
-        args_cli.distributed = config.multi_gpu
-        args_cli.device = device
+        args_cli.multi_gpu = int(os.environ.get("WORLD_SIZE", "1")) > 1
+        args_cli.distributed = args_cli.multi_gpu
+
+        requested_visualizer = config.get("viz", None)
+        if requested_visualizer:
+            args_cli.visualizer = [str(requested_visualizer)]
+            args_cli.visualizer_explicit = True
+        elif not args_cli.headless:
+            # Isaac Lab 3 no longer treats headless=False as an implicit Kit
+            # visualizer request. Preserve the existing SONIC eval CLI behavior.
+            args_cli.visualizer = ["kit"]
+            args_cli.visualizer_explicit = True
 
         base_kit_args = (
             "--/log/level=error --/log/fileLogLevel=error --/log/outputStreamLevel=error"
@@ -245,7 +284,36 @@ def main(override_config: omegaconf.OmegaConf):
             app_launcher = AppLauncher(args_cli)
         simulation_app = app_launcher.app  # noqa: F841
 
-    import torch
+    # Import Torch/NumPy users only after Kit starts. OpenBLAS registers at-fork
+    # handlers that can crash Kit when these modules are imported pre-launch.
+    import datetime as dt
+
+    import accelerate
+    import torch  # noqa: E402, RUF100
+
+    from gear_sonic import train_agent_trl
+    from gear_sonic.trl.utils import common as trl_utils_common
+    from gear_sonic.trl.utils import scheduler
+    from gear_sonic.utils import common as rl_utils_common
+    from gear_sonic.utils import obs_utils
+
+    kwargs = accelerate.InitProcessGroupKwargs(timeout=dt.timedelta(seconds=6000))
+    accelerator = accelerate.Accelerator(kwargs_handlers=[kwargs])
+
+    device = str(accelerator.device)
+    if accelerator.device.type == "cuda":
+        try:
+            torch.cuda.set_device(accelerator.local_process_index)
+        except Exception:  # noqa: S110, BLE001
+            pass
+
+    config.multi_gpu = accelerator.num_processes > 1
+    if config.multi_gpu:
+        config.global_rank = accelerator.process_index
+        config.seed += accelerator.process_index
+        config.algo.config.global_rank = accelerator.process_index
+        config.algo.config.world_size = accelerator.num_processes
+    rl_utils_common.seeding(config.seed)
 
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
@@ -369,6 +437,8 @@ def main(override_config: omegaconf.OmegaConf):
                         env_config.commands.motion.motion_lib_cfg.filter_motion_keys = filter_keys
 
     env = train_agent_trl.create_manager_env(config, device, args_cli)
+    if env_config.config.get("scene_usd_path", None):
+        _log_composed_scene_alignment(env)
 
     module_dim_dict = getattr(config.algo.config, "module_dim", {})
     policy_backbone_kwargs = {}

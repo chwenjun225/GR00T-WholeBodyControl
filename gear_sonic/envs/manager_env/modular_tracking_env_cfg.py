@@ -352,14 +352,42 @@ class MySceneCfg(InteractiveSceneCfg):
                 ),
                 debug_vis=False,
             )
+        elif terrain_type == "none":
+            self.terrain = None
         else:
             raise ValueError(f"Unknown terrain type: {terrain_type}")
+
+        scene_usd_path = config.get("scene_usd_path", None)
+        if scene_usd_path:
+            scene_usd_path = os.path.abspath(os.path.expanduser(scene_usd_path))
+            if not os.path.isfile(scene_usd_path):
+                raise FileNotFoundError(f"Scene USD does not exist: {scene_usd_path}")
+            scene_position = tuple(float(value) for value in config.get("scene_position", [0, 0, 0]))
+            scene_rotation = tuple(
+                float(value) for value in config.get("scene_rotation_xyzw", [0, 0, 0, 1])
+            )
+            if len(scene_position) != 3:
+                raise ValueError("scene_position must contain exactly three XYZ values")
+            if len(scene_rotation) != 4:
+                raise ValueError("scene_rotation_xyzw must contain exactly four XYZW values")
+            self.background_scene = AssetBaseCfg(
+                prim_path=config.get("scene_prim_path", "/World/CiboScene"),
+                spawn=sim_utils.UsdFileCfg(usd_path=scene_usd_path),
+                init_state=AssetBaseCfg.InitialStateCfg(
+                    pos=scene_position,
+                    rot=scene_rotation,
+                ),
+                collision_group=-1,
+            )
 
         # robots
         self.robot: ArticulationCfg = dataclasses.MISSING
 
         # lights
-        if not config.get("render_ego_random", False):
+        if config.get("use_scene_lighting", False):
+            self.light = None
+            self.sky_light = None
+        elif not config.get("render_ego_random", False):
             self.light = AssetBaseCfg(
                 prim_path="/World/light",
                 spawn=sim_utils.DistantLightCfg(color=(0.75, 0.75, 0.75), intensity=3000.0),
@@ -969,7 +997,8 @@ class ModularTrackingEnvCfg(ManagerBasedRLEnvCfg):
         # Simulation settings
         self.sim.dt = config.get("sim_dt", 0.005)
         self.sim.render_interval = self.decimation
-        self.sim.physics_material = self.scene.terrain.physics_material
+        if self.scene.terrain is not None:
+            self.sim.physics_material = self.scene.terrain.physics_material
 
         # Increase collision stack size for scenes with complex collision meshes (e.g. staircases)
         gpu_collision_stack_size_exp = config.get("gpu_collision_stack_size_exp", 26)

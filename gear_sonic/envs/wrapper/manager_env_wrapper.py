@@ -1099,7 +1099,8 @@ class ManagerEnvWrapper:
 
     def setup_keyboard(self):
         try:
-            from isaaclab.devices.keyboard.se2_keyboard import Se2Keyboard, Se2KeyboardCfg
+            from isaaclab.devices.keyboard.se2_keyboard import Se2Keyboard
+            from isaaclab.devices.keyboard.se2_keyboard_cfg import Se2KeyboardCfg
 
             cfg = Se2KeyboardCfg()
             self.keyboard_interface = Se2Keyboard(cfg)
