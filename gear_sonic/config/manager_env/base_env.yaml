@@ -37,6 +37,11 @@ config:
   experiment_dir: ${experiment_dir}
   terrain_type: plane # "0: plane" or "1: trimesh"
 
+  # choose the simulation backend used by the environment.
+  # supported values: isaacsim, newton
+  # Use `++manager_env.config.physics_backend=newton` for the kit-less Newton/MJWarp path.
+  physics_backend: newton
+
   # Object mass override (kg). Set to override USD-defined mass.
   # Example: ++manager_env.config.object_mass=0.1
   object_mass: null

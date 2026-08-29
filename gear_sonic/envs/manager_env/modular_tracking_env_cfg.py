@@ -894,8 +894,13 @@ class MySceneCfg(InteractiveSceneCfg):
             # Camera position and rotation offsets (relative to attached link)
             camera_pos_offset = tuple(cameras_cfg.get("camera_pos_offset", [0.0, 0.0, 0.0]))
             camera_rot_offset = tuple(
-                cameras_cfg.get("camera_rot_offset", [1.0, 0.0, 0.0, 0.0])
-            )  # wxyz quaternion
+                cameras_cfg.get("camera_rot_offset", [0.0, 0.0, 0.0, 1.0])
+            )  # Isaac Lab CameraCfg uses xyzw quaternions.
+            camera_offset_convention = cameras_cfg.get("camera_offset_convention", "world")
+            if camera_offset_convention not in {"opengl", "ros", "world"}:
+                raise ValueError(
+                    "camera_offset_convention must be one of: opengl, ros, world"
+                )
 
             # Camera data types (e.g., ["rgb"], ["rgb", "depth"])
             camera_data_types = cameras_cfg.get("camera_data_types", ["rgb"])
@@ -906,7 +911,9 @@ class MySceneCfg(InteractiveSceneCfg):
             self.ego_camera = TiledCameraCfg(
                 prim_path=camera_prim_path,
                 offset=TiledCameraCfg.OffsetCfg(
-                    pos=camera_pos_offset, rot=camera_rot_offset, convention="world"
+                    pos=camera_pos_offset,
+                    rot=camera_rot_offset,
+                    convention=camera_offset_convention,
                 ),
                 data_types=camera_data_types,
                 spawn=camera_spawn_cfg,
@@ -1000,28 +1007,43 @@ class ModularTrackingEnvCfg(ManagerBasedRLEnvCfg):
         if self.scene.terrain is not None:
             self.sim.physics_material = self.scene.terrain.physics_material
 
-        # Increase collision stack size for scenes with complex collision meshes (e.g. staircases)
-        gpu_collision_stack_size_exp = config.get("gpu_collision_stack_size_exp", 26)
-        physx_kwargs = {
-            "gpu_max_rigid_patch_count": 10 * 2**15,
-            "gpu_collision_stack_size": 2**gpu_collision_stack_size_exp,
-        }
-
-        # Increase PhysX GPU memory only for multi-object scenes
-        # These prevent "totalAggregatePairsCapacity" errors when many objects are spawned
-        # Check if object_usd_path is a directory (multi-object mode)
-        object_usd_path = config.get("object_usd_path", "")
-        if config.get("add_object", False) and (
-            isinstance(object_usd_path, list) or os.path.isdir(object_usd_path)
-        ):
-            # With proper Z-spacing of initial positions, collision pairs should be minimal
-            # These are moderate values that should work for 1000+ envs
-            physx_kwargs.update(
-                gpu_found_lost_pairs_capacity=2**24,  # ~16M
-                gpu_found_lost_aggregate_pairs_capacity=2**24,
-                gpu_total_aggregate_pairs_capacity=2**21,  # ~2M
+        physics_backend = str(
+            config.get(
+                "physics_backend",
+                "newton" if config.get("headless", False) else "isaacsim",
             )
-        self.sim.physics = PhysxCfg(**physx_kwargs)
+        ).lower()
+
+        if physics_backend in {"newton", "newton_mjwarp", "mjwarp", "mujoco_warp"}:
+            # Newton / MuJoCo-Warp is the kit-less backend used for headless
+            # GR1T2 training. Keep the PhysX-only settings below only for the
+            # Isaac Sim / PhysX path.
+            from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+
+            self.sim.physics = NewtonCfg(solver_cfg=MJWarpSolverCfg())
+        else:
+            # Increase collision stack size for scenes with complex collision meshes (e.g. staircases)
+            gpu_collision_stack_size_exp = config.get("gpu_collision_stack_size_exp", 26)
+            physx_kwargs = {
+                "gpu_max_rigid_patch_count": 10 * 2**15,
+                "gpu_collision_stack_size": 2**gpu_collision_stack_size_exp,
+            }
+
+            # Increase PhysX GPU memory only for multi-object scenes
+            # These prevent "totalAggregatePairsCapacity" errors when many objects are spawned
+            # Check if object_usd_path is a directory (multi-object mode)
+            object_usd_path = config.get("object_usd_path", "")
+            if config.get("add_object", False) and (
+                isinstance(object_usd_path, list) or os.path.isdir(object_usd_path)
+            ):
+                # With proper Z-spacing of initial positions, collision pairs should be minimal
+                # These are moderate values that should work for 1000+ envs
+                physx_kwargs.update(
+                    gpu_found_lost_pairs_capacity=2**24,  # ~16M
+                    gpu_found_lost_aggregate_pairs_capacity=2**24,
+                    gpu_total_aggregate_pairs_capacity=2**21,  # ~2M
+                )
+            self.sim.physics = PhysxCfg(**physx_kwargs)
 
         # Viewer settings
         viewer_config = config.get("viewer", {})
