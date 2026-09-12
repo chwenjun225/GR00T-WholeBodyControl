@@ -144,23 +144,6 @@ def create_manager_env(config, device, args_cli):
     env_instance_cfg.seed = config.seed
     env_instance_cfg.sim.device = device
     env_instance_cfg.config["headless"] = args_cli.headless
-
-    requested_visualizers = getattr(args_cli, "visualizer", None) or []
-    if isinstance(requested_visualizers, str):
-        requested_visualizers = [requested_visualizers]
-    if not args_cli.headless and "kit" in requested_visualizers:
-        # The minimal isaaclab.python.kit experience does not reliably provide
-        # an active viewport.  Give the Kit visualizer its own viewport so GUI
-        # evaluation is visible instead of leaving an empty application window.
-        from isaaclab_visualizers.kit import KitVisualizerCfg
-
-        env_instance_cfg.sim.visualizer_cfgs = KitVisualizerCfg(
-            create_viewport=True,
-            viewport_name="SONIC GR1T2",
-            eye=tuple(env_instance_cfg.viewer.eye),
-            lookat=tuple(env_instance_cfg.viewer.lookat),
-        )
-
     env = ManagerBasedRLEnv(
         cfg=env_instance_cfg, render_mode="rgb_array" if not args_cli.headless else None
     )
@@ -169,24 +152,9 @@ def create_manager_env(config, device, args_cli):
     return env
 
 
-@hydra.main(config_path="config", config_name="base")
+@hydra.main(config_path="config", config_name="base", version_base="1.1")
 def main(config: OmegaConf):
-    simulator_type = str(
-        config.get(
-            "simulator_type",
-            config.get(
-                "physics_backend",
-                config.get("manager_env", {}).config.get("physics_backend", "newton"),
-            ),
-        )
-    ).lower()
-    if simulator_type in {"isaacsim", "isaac_sim", "physx"}:
-        simulator_type = "IsaacSim"
-    elif simulator_type in {"newton", "newton_mjwarp", "mjwarp", "mujoco_warp"}:
-        simulator_type = "Newton"
-    else:
-        simulator_type = "IsaacSim"
-
+    simulator_type = "IsaacSim"
     env_config = config.manager_env
     from transformers import HfArgumentParser
     from trl import ModelConfig, PPOConfig, ScriptArguments
@@ -255,8 +223,8 @@ def main(config: OmegaConf):
             resume="allow",
         )
 
-    # Setup simulator similar to train_agent.py. Newton / MJWarp is the kit-less
-    # backend used for headless GR1T2 training and does not need an AppLauncher.
+    # Setup simulator similar to train_agent.py
+
     if simulator_type == "IsaacSim":
         try:
             with open("./rl/simulator/isaacsim/.isaacsim_version", encoding="utf-8") as f:
@@ -297,10 +265,6 @@ def main(config: OmegaConf):
         args_cli.distributed = config.multi_gpu
         args_cli.device = device
 
-        if config.get("viz", None):
-            args_cli.visualizer = [str(config.viz)]
-            args_cli.visualizer_explicit = True
-
         # Base kit args (quiet logs)
         args_cli.kit_args = (
             "--/log/level=error --/log/fileLogLevel=error --/log/outputStreamLevel=error"
@@ -313,31 +277,6 @@ def main(config: OmegaConf):
             app_launcher = AppLauncher(args_cli)
 
         simulation_app = app_launcher.app
-    else:
-        import argparse
-
-        args_cli = argparse.Namespace(
-            num_envs=config.num_envs,
-            seed=config.seed,
-            env_spacing=env_config.config.env_spacing,
-            output_dir=config.output_dir,
-            enable_cameras=(
-                env_config.config.get("enable_cameras", False)
-                or env_config.config.get("render_results", False)
-                or env_config.config.get("render_ego", False)
-                or env_config.config.get("overview_camera", False)
-            ),
-            headless=config.headless,
-            multi_gpu=config.multi_gpu,
-            distributed=config.multi_gpu,
-            device=device,
-            visualizer=[str(config.viz)] if config.get("viz", None) else None,
-            visualizer_explicit=bool(config.get("viz", None)),
-        )
-        # Reset to the current process device so the Newton / MuJoCo-Warp backend
-        # chooses the right CUDA device without launching the Kit runtime.
-        if hasattr(torch, "cuda") and torch.cuda.is_available():
-            torch.cuda.set_device(device)
 
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True

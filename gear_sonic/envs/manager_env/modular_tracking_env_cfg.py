@@ -8,7 +8,6 @@ from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg, ViewerCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import CameraCfg, ContactSensorCfg, FrameTransformerCfg, TiledCameraCfg
-from isaaclab_physx.physics import PhysxCfg
 import isaaclab.sim as sim_utils
 from isaaclab.sim.utils import clone
 from isaaclab.terrains import TerrainImporterCfg
@@ -17,7 +16,7 @@ import joblib
 import pxr
 
 from gear_sonic.envs.manager_env.mdp import terrain
-from gear_sonic.envs.manager_env.robots import g1, gr1t2, h2
+from gear_sonic.envs.manager_env.robots import g1, h2
 from gear_sonic.trl.utils import common
 
 
@@ -352,42 +351,14 @@ class MySceneCfg(InteractiveSceneCfg):
                 ),
                 debug_vis=False,
             )
-        elif terrain_type == "none":
-            self.terrain = None
         else:
             raise ValueError(f"Unknown terrain type: {terrain_type}")
-
-        scene_usd_path = config.get("scene_usd_path", None)
-        if scene_usd_path:
-            scene_usd_path = os.path.abspath(os.path.expanduser(scene_usd_path))
-            if not os.path.isfile(scene_usd_path):
-                raise FileNotFoundError(f"Scene USD does not exist: {scene_usd_path}")
-            scene_position = tuple(float(value) for value in config.get("scene_position", [0, 0, 0]))
-            scene_rotation = tuple(
-                float(value) for value in config.get("scene_rotation_xyzw", [0, 0, 0, 1])
-            )
-            if len(scene_position) != 3:
-                raise ValueError("scene_position must contain exactly three XYZ values")
-            if len(scene_rotation) != 4:
-                raise ValueError("scene_rotation_xyzw must contain exactly four XYZW values")
-            self.background_scene = AssetBaseCfg(
-                prim_path=config.get("scene_prim_path", "/World/CiboScene"),
-                spawn=sim_utils.UsdFileCfg(usd_path=scene_usd_path),
-                init_state=AssetBaseCfg.InitialStateCfg(
-                    pos=scene_position,
-                    rot=scene_rotation,
-                ),
-                collision_group=-1,
-            )
 
         # robots
         self.robot: ArticulationCfg = dataclasses.MISSING
 
         # lights
-        if config.get("use_scene_lighting", False):
-            self.light = None
-            self.sky_light = None
-        elif not config.get("render_ego_random", False):
+        if not config.get("render_ego_random", False):
             self.light = AssetBaseCfg(
                 prim_path="/World/light",
                 spawn=sim_utils.DistantLightCfg(color=(0.75, 0.75, 0.75), intensity=3000.0),
@@ -894,13 +865,8 @@ class MySceneCfg(InteractiveSceneCfg):
             # Camera position and rotation offsets (relative to attached link)
             camera_pos_offset = tuple(cameras_cfg.get("camera_pos_offset", [0.0, 0.0, 0.0]))
             camera_rot_offset = tuple(
-                cameras_cfg.get("camera_rot_offset", [0.0, 0.0, 0.0, 1.0])
-            )  # Isaac Lab CameraCfg uses xyzw quaternions.
-            camera_offset_convention = cameras_cfg.get("camera_offset_convention", "world")
-            if camera_offset_convention not in {"opengl", "ros", "world"}:
-                raise ValueError(
-                    "camera_offset_convention must be one of: opengl, ros, world"
-                )
+                cameras_cfg.get("camera_rot_offset", [1.0, 0.0, 0.0, 0.0])
+            )  # wxyz quaternion
 
             # Camera data types (e.g., ["rgb"], ["rgb", "depth"])
             camera_data_types = cameras_cfg.get("camera_data_types", ["rgb"])
@@ -911,9 +877,7 @@ class MySceneCfg(InteractiveSceneCfg):
             self.ego_camera = TiledCameraCfg(
                 prim_path=camera_prim_path,
                 offset=TiledCameraCfg.OffsetCfg(
-                    pos=camera_pos_offset,
-                    rot=camera_rot_offset,
-                    convention=camera_offset_convention,
+                    pos=camera_pos_offset, rot=camera_rot_offset, convention="world"
                 ),
                 data_types=camera_data_types,
                 spawn=camera_spawn_cfg,
@@ -1004,46 +968,25 @@ class ModularTrackingEnvCfg(ManagerBasedRLEnvCfg):
         # Simulation settings
         self.sim.dt = config.get("sim_dt", 0.005)
         self.sim.render_interval = self.decimation
-        if self.scene.terrain is not None:
-            self.sim.physics_material = self.scene.terrain.physics_material
+        self.sim.physics_material = self.scene.terrain.physics_material
+        self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
 
-        physics_backend = str(
-            config.get(
-                "physics_backend",
-                "newton" if config.get("headless", False) else "isaacsim",
-            )
-        ).lower()
+        # Increase collision stack size for scenes with complex collision meshes (e.g. staircases)
+        gpu_collision_stack_size_exp = config.get("gpu_collision_stack_size_exp", 26)
+        self.sim.physx.gpu_collision_stack_size = 2**gpu_collision_stack_size_exp
 
-        if physics_backend in {"newton", "newton_mjwarp", "mjwarp", "mujoco_warp"}:
-            # Newton / MuJoCo-Warp is the kit-less backend used for headless
-            # GR1T2 training. Keep the PhysX-only settings below only for the
-            # Isaac Sim / PhysX path.
-            from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
-
-            self.sim.physics = NewtonCfg(solver_cfg=MJWarpSolverCfg())
-        else:
-            # Increase collision stack size for scenes with complex collision meshes (e.g. staircases)
-            gpu_collision_stack_size_exp = config.get("gpu_collision_stack_size_exp", 26)
-            physx_kwargs = {
-                "gpu_max_rigid_patch_count": 10 * 2**15,
-                "gpu_collision_stack_size": 2**gpu_collision_stack_size_exp,
-            }
-
-            # Increase PhysX GPU memory only for multi-object scenes
-            # These prevent "totalAggregatePairsCapacity" errors when many objects are spawned
-            # Check if object_usd_path is a directory (multi-object mode)
-            object_usd_path = config.get("object_usd_path", "")
-            if config.get("add_object", False) and (
-                isinstance(object_usd_path, list) or os.path.isdir(object_usd_path)
-            ):
-                # With proper Z-spacing of initial positions, collision pairs should be minimal
-                # These are moderate values that should work for 1000+ envs
-                physx_kwargs.update(
-                    gpu_found_lost_pairs_capacity=2**24,  # ~16M
-                    gpu_found_lost_aggregate_pairs_capacity=2**24,
-                    gpu_total_aggregate_pairs_capacity=2**21,  # ~2M
-                )
-            self.sim.physics = PhysxCfg(**physx_kwargs)
+        # Increase PhysX GPU memory only for multi-object scenes
+        # These prevent "totalAggregatePairsCapacity" errors when many objects are spawned
+        # Check if object_usd_path is a directory (multi-object mode)
+        object_usd_path = config.get("object_usd_path", "")
+        if config.get("add_object", False) and (
+            isinstance(object_usd_path, list) or os.path.isdir(object_usd_path)
+        ):
+            # With proper Z-spacing of initial positions, collision pairs should be minimal
+            # These are moderate values that should work for 1000+ envs
+            self.sim.physx.gpu_found_lost_pairs_capacity = 2**24  # ~16M
+            self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 2**24
+            self.sim.physx.gpu_total_aggregate_pairs_capacity = 2**21  # ~2M
 
         # Viewer settings
         viewer_config = config.get("viewer", {})
@@ -1062,11 +1005,6 @@ class ModularTrackingEnvCfg(ManagerBasedRLEnvCfg):
                 "robot_cfg": h2.H2_CFG,
                 "action_scale": h2.H2_ACTION_SCALE,
                 "isaaclab_to_mujoco_mapping": h2.H2_ISAACLAB_TO_MUJOCO_MAPPING,
-            },
-            "gr1t2": {
-                "robot_cfg": gr1t2.GR1T2_CFG,
-                "action_scale": gr1t2.GR1T2_ACTION_SCALE,
-                "isaaclab_to_mujoco_mapping": gr1t2.GR1T2_ISAACLAB_TO_MUJOCO_MAPPING,
             },
         }
 

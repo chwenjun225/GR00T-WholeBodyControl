@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from isaaclab.envs.manager_based_rl_env import ManagerBasedEnv
 
 # Import joint index functions (single source of truth)
-from gear_sonic.envs.env_utils.joint_utils import get_body_joint_indices, get_extra_joint_indices
+from gear_sonic.envs.env_utils.joint_utils import get_body_joint_indices, get_hand_joint_indices
 
 # Import visualization markers for contact point visualization
 try:
@@ -22,11 +22,6 @@ try:
     VISUALIZATION_AVAILABLE = True
 except ImportError:
     VISUALIZATION_AVAILABLE = False
-
-
-def _wxyz_to_sim_xyzw(quat: torch.Tensor) -> torch.Tensor:
-    """Convert SONIC/MotionLib quaternions to the Isaac Lab simulation convention."""
-    return quat[..., [1, 2, 3, 0]]
 
 
 class ManagerEnvWrapper:
@@ -65,10 +60,7 @@ class ManagerEnvWrapper:
             not self.config.get("headless", False)
         )
         self._viz_every_n_steps = int(self.config.get("viz_every_n_steps", 1))
-        policy_joint_count = len(
-            env.cfg.isaaclab_to_mujoco_mapping.get("isaaclab_dof_joints", [])
-        )
-        self._plot_action_dim = int(self.config.get("action_plot_dim", policy_joint_count))
+        self._plot_action_dim = int(self.config.get("action_plot_dim", 29))
         clip_default = self.config.get("action_clip_value", 1.0)  # noqa: F841
         self._action_ylim = float(self.config.get("action_plot_ylim", 10.0))
         self._plot_window = int(self.config.get("action_plot_window", 200))
@@ -91,10 +83,6 @@ class ManagerEnvWrapper:
         self._body_joint_indices = None
         self._hand_joint_indices = None
         self._setup_replay_joint_indices()  # Setup for replay mode
-        self._replay_validate_kinematics = self.config.get(
-            "replay_validate_kinematics", False
-        )
-        self._replay_validation_done = False
 
         # Initialize finger primitive support
         self._use_finger_primitive = self.config.get("use_finger_primitive", False)
@@ -183,8 +171,9 @@ class ManagerEnvWrapper:
             self.viewer_focused = False
 
     def _setup_replay_joint_indices(self):
-        """Resolve replay policy/extra joints from the active robot mapping."""
-        self._setup_action_joint_indices()
+        """Setup joint indices for replay mode if robot has more DOFs than motion lib (29)."""
+        if self.env.scene["robot"].num_joints > 29:
+            self._setup_action_joint_indices()
 
     def _compute_tokenizer_obs_indices(self):
         """Compute start and end indices for each tokenizer observation in the flattened tensor."""
@@ -207,7 +196,7 @@ class ManagerEnvWrapper:
         """Setup policy_atm for action_transform_module when robot has more DOFs than ATM expects."""
         atm_num_joints = env_config.get("robot", {}).get("actions_dim") or env_config.get(
             "robot", {}
-        ).get("num_joints", len(self._body_joint_indices))
+        ).get("num_joints", 29)
         self._needs_policy_atm = self.config.get("needs_policy_atm", True)
         self._atm_num_joints = atm_num_joints
         self._current_num_joints = self.env.scene["robot"].num_joints
@@ -226,16 +215,13 @@ class ManagerEnvWrapper:
             self._setup_action_joint_indices()
 
     def _setup_action_joint_indices(self):
-        """Compute name-based policy and extra articulation joint indices."""
+        """Compute joint indices for mapping body (29 DOF) and hand (14 DOF) actions."""
         if self._body_joint_indices is not None:
             return
 
         robot = self.env.scene["robot"]
-        body_joint_names = self.env.cfg.isaaclab_to_mujoco_mapping.get("isaaclab_dof_joints")
-        if not body_joint_names:
-            raise ValueError("Active robot mapping does not define isaaclab_dof_joints")
-        self._body_joint_indices = get_body_joint_indices(robot, list(body_joint_names))
-        self._hand_joint_indices = get_extra_joint_indices(robot, list(body_joint_names))
+        self._body_joint_indices = get_body_joint_indices(robot)
+        self._hand_joint_indices = get_hand_joint_indices(robot)
 
     def _setup_finger_primitives(self):
         """Setup finger primitive action mapping from config.
@@ -304,9 +290,9 @@ class ManagerEnvWrapper:
             Tensor of shape (num_envs, num_finger_joints) with joint position targets
         """
         num_envs = primitive_actions.shape[0]
-        if self._hand_joint_indices is None:
-            raise RuntimeError("Extra joint indices must be resolved before finger conversion")
-        num_finger_joints = len(self._hand_joint_indices)
+        num_finger_joints = (
+            len(self._hand_joint_indices) if self._hand_joint_indices is not None else 14
+        )
         finger_targets = torch.zeros(
             num_envs, num_finger_joints, device=self.device, dtype=primitive_actions.dtype
         )
@@ -343,7 +329,8 @@ class ManagerEnvWrapper:
                     rel_idx = hand_indices_list.index(abs_idx)
                     finger_targets[:, rel_idx] = joint_targets[:, j]
                 else:
-                    raise RuntimeError("Extra joint indices are unavailable")
+                    # Fallback: assume hand joints are at the end
+                    finger_targets[:, abs_idx - 29] = joint_targets[:, j]
 
         return finger_targets
 
@@ -863,6 +850,12 @@ class ManagerEnvWrapper:
             except Exception:  # noqa: S110, BLE001
                 pass
 
+        if self.motion_command is not None and hasattr(
+            self.motion_command, "capture_adaptive_cursor_snapshot"
+        ):
+            # Capture after all between-step cursor mutations and immediately
+            # before Isaac Lab can reset/resample terminated environments.
+            self.motion_command.capture_adaptive_cursor_snapshot()
         obs_dict, rew, terminated, truncated, extras = self.env.step(env_actions)
 
         # compute dones for compatibility with RSL-RL
@@ -1099,8 +1092,7 @@ class ManagerEnvWrapper:
 
     def setup_keyboard(self):
         try:
-            from isaaclab.devices.keyboard.se2_keyboard import Se2Keyboard
-            from isaaclab.devices.keyboard.se2_keyboard_cfg import Se2KeyboardCfg
+            from isaaclab.devices.keyboard.se2_keyboard import Se2Keyboard, Se2KeyboardCfg
 
             cfg = Se2KeyboardCfg()
             self.keyboard_interface = Se2Keyboard(cfg)
@@ -1257,11 +1249,6 @@ class ManagerEnvWrapper:
 
         # Store custom origins
         self._replay_custom_origins = custom_origins
-        # Reference getters and debug markers use scene.env_origins. Keep that
-        # shared origin tensor synchronized with the replay-only grid; otherwise
-        # multi-environment robots move to custom origins while their markers
-        # remain on the environment's original layout.
-        self.env.scene.env_origins.copy_(custom_origins)
 
         logger.info(
             f"Grid bounds: X=[{custom_origins[:, 0].min():.1f}, {custom_origins[:, 0].max():.1f}], "
@@ -1487,16 +1474,6 @@ class ManagerEnvWrapper:
         self._replay_loop = loop
         self._replay_num_steps_per_env = num_steps_per_env
         self._replay_max_num_steps = max_num_steps
-
-        # TrackingCommand owns the reference clock used by debug markers and
-        # reference properties. Replay previously advanced only the wrapper's
-        # private clock, so the robot and yellow markers displayed different
-        # frames (and potentially different random start offsets).
-        self.motion_command.set_motion_state(
-            self._replay_motion_ids,
-            self._replay_time_steps,
-            motion_start_time_steps=torch.zeros_like(self._replay_time_steps),
-        )
 
         # Pre-load table metadata from pkl files for ALL motions (per-env)
         # This supports multi-motion replay where each env can have different table positions
@@ -1936,21 +1913,24 @@ class ManagerEnvWrapper:
             self._replay_motion_ids, self._replay_time_steps
         )
 
-        # Handle a body-only motion library driving a larger articulation.
+        # Handle DOF mismatch between motion library (e.g., 29 DOF) and robot (e.g., 43 DOF)
         robot_num_joints = self.motion_command.robot.num_joints
         motion_lib_num_dof = motion_lib_joint_pos.shape[-1]
 
         if robot_num_joints > motion_lib_num_dof and self._body_joint_indices is not None:
+            # Robot has more DOFs than motion lib (e.g., 43 DOF robot with 29 DOF motion data)
+            # Use body joint indices for proper mapping
             num_envs = motion_lib_joint_pos.shape[0]
 
-            # Preserve articulation defaults for every extra/finger joint.
-            joint_pos = self.motion_command.robot.data.default_joint_pos[
-                self._replay_env_ids
-            ].clone().to(dtype=motion_lib_joint_pos.dtype)
+            # Create full joint tensors with zeros for all DOFs
+            joint_pos = torch.zeros(
+                num_envs, robot_num_joints, device=self.device, dtype=motion_lib_joint_pos.dtype
+            )
             joint_vel = torch.zeros(
                 num_envs, robot_num_joints, device=self.device, dtype=motion_lib_joint_vel.dtype
             )
 
+            # Map motion lib data to body joint indices (using G1_ISAACLab_ORDER mapping)
             joint_pos[:, self._body_joint_indices] = motion_lib_joint_pos
             joint_vel[:, self._body_joint_indices] = motion_lib_joint_vel
 
@@ -1959,13 +1939,9 @@ class ManagerEnvWrapper:
                 self._replay_motion_ids, self._replay_time_steps
             )
             if hand_dof_pos is not None:
+                # Hand DOFs are the last N joints (in Isaac order, not G1_HAND_JOINTS order)
                 num_hand_dof = hand_dof_pos.shape[-1]
-                if num_hand_dof != len(self._hand_joint_indices):
-                    raise ValueError(
-                        f"Motion hand DOFs={num_hand_dof}, expected "
-                        f"{len(self._hand_joint_indices)} extra articulation joints"
-                    )
-                joint_pos[:, self._hand_joint_indices] = hand_dof_pos
+                joint_pos[:, -num_hand_dof:] = hand_dof_pos
         else:
             joint_pos = motion_lib_joint_pos
             joint_vel = motion_lib_joint_vel
@@ -1980,12 +1956,8 @@ class ManagerEnvWrapper:
         self.motion_command.robot.write_joint_state_to_sim(
             joint_pos, joint_vel, env_ids=self._replay_env_ids
         )
-        # MotionLib stores root quaternion as wxyz, while Isaac Lab state
-        # writers use xyzw for both the PhysX and Newton backends.
-        root_quat_xyzw = _wxyz_to_sim_xyzw(root_quat)
-
         self.motion_command.robot.write_root_state_to_sim(
-            torch.cat([root_pos, root_quat_xyzw, root_lin_vel, root_ang_vel], dim=-1),
+            torch.cat([root_pos, root_quat, root_lin_vel, root_ang_vel], dim=-1),
             env_ids=self._replay_env_ids,
         )
 
@@ -2016,9 +1988,7 @@ class ManagerEnvWrapper:
             for obj_idx in range(object_root_pos.shape[1]):
                 obj_pos = object_root_pos[:, obj_idx, :]
                 obj_quat = object_root_quat[:, obj_idx, :]
-                object_root_pose = torch.cat(
-                    [obj_pos, _wxyz_to_sim_xyzw(obj_quat)], dim=-1
-                )
+                object_root_pose = torch.cat([obj_pos, obj_quat], dim=-1)
 
                 self.env.scene["object"].write_root_pose_to_sim(
                     object_root_pose, env_ids=self._replay_env_ids
@@ -2056,9 +2026,7 @@ class ManagerEnvWrapper:
             else:
                 table_pos = table_pos + self.env.scene.env_origins[self._replay_env_ids]
 
-            table_root_pose = torch.cat(
-                [table_pos, _wxyz_to_sim_xyzw(table_quat)], dim=-1
-            )
+            table_root_pose = torch.cat([table_pos, table_quat], dim=-1)
             self.env.scene["table"].write_root_pose_to_sim(
                 table_root_pose, env_ids=self._replay_env_ids
             )
@@ -2073,72 +2041,6 @@ class ManagerEnvWrapper:
             self._update_contact_center_visualization()
 
         self.env.sim.forward()
-        self._validate_replay_kinematics_once(joint_pos, root_quat)
-
-    def _validate_replay_kinematics_once(self, expected_joint_pos, expected_root_quat_wxyz):
-        """Report name-aligned replay errors after the simulator has consumed state writes."""
-        if not self._replay_validate_kinematics or self._replay_validation_done:
-            return
-
-        robot = self.motion_command.robot
-        robot.update(0.0)
-        env_ids = self._replay_env_ids
-        actual_joint_pos = robot.data.joint_pos[env_ids]
-        joint_error = torch.abs(actual_joint_pos - expected_joint_pos)
-
-        reference_body_pos = self._motion_lib.get_body_pos_w(
-            self._replay_motion_ids, self._replay_time_steps
-        )
-        if hasattr(self, "_replay_custom_origins"):
-            reference_body_pos = reference_body_pos + self._replay_custom_origins[env_ids, None, :]
-        else:
-            reference_body_pos = reference_body_pos + self.env.scene.env_origins[env_ids, None, :]
-        actual_body_pos = robot.data.body_pos_w[env_ids][:, self.motion_command.body_indexes]
-        body_error = torch.linalg.vector_norm(actual_body_pos - reference_body_pos, dim=-1)
-        marker_body_error = torch.linalg.vector_norm(
-            self.motion_command.body_pos_w[env_ids] - reference_body_pos, dim=-1
-        )
-
-        reference_body_quat = _wxyz_to_sim_xyzw(
-            self._motion_lib.get_body_quat_w(
-                self._replay_motion_ids, self._replay_time_steps
-            )
-        )
-        actual_body_quat = robot.data.body_quat_w[env_ids][:, self.motion_command.body_indexes]
-        body_quat_dot = torch.abs(torch.sum(actual_body_quat * reference_body_quat, dim=-1))
-        body_quat_error = 2.0 * torch.acos(body_quat_dot.clamp(max=1.0))
-        reward_point_error = torch.linalg.vector_norm(
-            self.motion_command.robot_reward_point_body_pos_w[env_ids]
-            - self.motion_command.reward_point_body_pos_w[env_ids],
-            dim=-1,
-        )
-
-        actual_root_quat = robot.data.root_quat_w[env_ids]
-        root_quat_dot = torch.abs(
-            torch.sum(actual_root_quat * _wxyz_to_sim_xyzw(expected_root_quat_wxyz), dim=-1)
-        )
-
-        worst_body_error, worst_body_index = body_error.max(dim=1)
-        logger.info(
-            "Replay validation: max_joint_error={}, max_body_error={}, "
-            "max_marker_clock_error={}, max_body_quat_error_rad={}, "
-            "max_reward_point_error={}, root_quat_abs_dot={}",
-            joint_error.max(dim=1).values.detach().cpu().tolist(),
-            worst_body_error.detach().cpu().tolist(),
-            marker_body_error.max(dim=1).values.detach().cpu().tolist(),
-            body_quat_error.max(dim=1).values.detach().cpu().tolist(),
-            reward_point_error.max(dim=1).values.detach().cpu().tolist(),
-            root_quat_dot.detach().cpu().tolist(),
-        )
-        for env_index in range(min(len(env_ids), 4)):
-            body_index = int(worst_body_index[env_index])
-            logger.info(
-                "Replay validation env {} worst body: {} error={:.6f}m",
-                int(env_ids[env_index]),
-                self.motion_command.cfg.body_names[body_index],
-                float(worst_body_error[env_index]),
-            )
-        self._replay_validation_done = True
 
     def step_replay(self):
         """Step the replay forward for all environments. Call this in a loop to animate the motions.

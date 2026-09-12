@@ -25,7 +25,6 @@ from isaaclab.utils.math import (
     quat_inv,
     quat_mul,
     sample_uniform,
-    yaw_quat,
 )
 import numpy as np
 import torch
@@ -42,11 +41,6 @@ if TYPE_CHECKING:
 # Objects spread vertically (Z) since envs only vary in X,Y - much simpler!
 INACTIVE_OBJECT_BASE_OFFSET = torch.tensor([1000.0, 0.0, -50.0])  # 1km away in X, 50m underground
 INACTIVE_OBJECT_Z_SPACING = 10.0  # 10m vertical spacing between objects (must be > chair height)
-
-
-def _wxyz_to_xyzw(quat: torch.Tensor) -> torch.Tensor:
-    """Convert scalar-first SONIC/MotionLib quaternions to Isaac Lab's convention."""
-    return quat[..., [1, 2, 3, 0]]
 
 
 def _init_variable_frames(
@@ -233,9 +227,6 @@ class TrackingCommand(CommandTerm):
                 "randomize_wrist_std": self.cfg.randomize_wrist_std,
             }
         )
-        mujoco_joint_names = env.cfg.isaaclab_to_mujoco_mapping.get("mujoco_joints")
-        if mujoco_joint_names is not None:
-            motion_lib_cfg["actuated_joint_names"] = mujoco_joint_names
 
         self.motion_lib = motion_lib_robot.MotionLibRobot(
             motion_lib_cfg, self.num_envs, self.device
@@ -249,6 +240,12 @@ class TrackingCommand(CommandTerm):
             self.max_num_load_motions = max_num_load_motions
         self.motion_lib.load_motions_for_training(max_num_seqs=self.max_num_load_motions)
         self.use_adaptive_sampling = self.motion_lib.use_adaptive_sampling
+        # Isaac Lab resamples terminated environments before _update_command
+        # reads the cursor. Keep the pre-physics cursor so failures are charged
+        # to the motion/bin that was actually being tracked.
+        self._adp_prev_motion_ids = None
+        self._adp_prev_cursor = None
+        self._adp_snapshot_valid = False
 
         # Load contact data for contact-based initialization
         self._load_contact_data()
@@ -264,28 +261,8 @@ class TrackingCommand(CommandTerm):
         self.has_dof_mismatch = self.extra_num_dof > 0
 
         if self.has_dof_mismatch:
-            body_joint_names = env.cfg.isaaclab_to_mujoco_mapping.get("isaaclab_dof_joints")
-            if body_joint_names is None:
-                raise ValueError(
-                    "DOF-mismatched robot mapping must define isaaclab_dof_joints"
-                )
-            else:
-                self.body_joint_indices = joint_utils.get_body_joint_indices(
-                    self.robot, list(body_joint_names)
-                )
-                self.extra_joint_indices = joint_utils.get_extra_joint_indices(
-                    self.robot, list(body_joint_names)
-                )
-            if len(self.body_joint_indices) != self.motion_lib_num_dof:
-                raise ValueError(
-                    f"Resolved {len(self.body_joint_indices)} policy joints, expected "
-                    f"motion_lib_num_dof={self.motion_lib_num_dof}"
-                )
-            if len(self.extra_joint_indices) != self.extra_num_dof:
-                raise ValueError(
-                    f"Resolved {len(self.extra_joint_indices)} extra joints, expected "
-                    f"extra_num_dof={self.extra_num_dof}"
-                )
+            self.body_joint_indices = joint_utils.get_body_joint_indices(self.robot)
+            self.extra_joint_indices = joint_utils.get_hand_joint_indices(self.robot)
             self.extra_default_positions = torch.tensor(
                 self.cfg.hand_default_positions or [0.0] * self.extra_num_dof,
                 dtype=torch.float32,
@@ -296,16 +273,6 @@ class TrackingCommand(CommandTerm):
                 dtype=torch.float32,
                 device=self.device,
             )
-            if self.extra_default_positions.numel() != self.extra_num_dof:
-                raise ValueError(
-                    f"Expected {self.extra_num_dof} extra default positions, got "
-                    f"{self.extra_default_positions.numel()}"
-                )
-            if self.extra_default_velocities.numel() != self.extra_num_dof:
-                raise ValueError(
-                    f"Expected {self.extra_num_dof} extra default velocities, got "
-                    f"{self.extra_default_velocities.numel()}"
-                )
 
         # Step 1: Select which motions to use
         if self.cfg.use_paired_motions:
@@ -369,7 +336,7 @@ class TrackingCommand(CommandTerm):
         self.body_quat_relative_w = torch.zeros(
             self.num_envs, len(cfg.body_names), 4, device=self.device
         )
-        self.body_quat_relative_w[:, :, 3] = 1.0
+        self.body_quat_relative_w[:, :, 0] = 1.0
 
         self.num_future_frames = self.cfg.num_future_frames
         # Motion lib is at target_fps; ref frames are spaced by dt_future_ref_frames (seconds).
@@ -777,6 +744,14 @@ class TrackingCommand(CommandTerm):
 
         return inst
 
+    def capture_adaptive_cursor_snapshot(self):
+        """Capture the cursor tracked by the next physics step."""
+        if not self.use_adaptive_sampling:
+            return
+        self._adp_prev_motion_ids = self.motion_ids.clone()
+        self._adp_prev_cursor = self.motion_start_time_steps + self.time_steps
+        self._adp_snapshot_valid = True
+
     def set_is_evaluating(self, is_evaluating: bool = True):
         """Toggle evaluation mode, which disables reset randomizations."""
         self.is_evaluating = is_evaluating
@@ -814,10 +789,8 @@ class TrackingCommand(CommandTerm):
         self.body_pos_relative_w[env_ids] = self.motion_lib.get_body_pos_w(
             self.motion_ids[env_ids], self.motion_start_time_steps[env_ids]
         )
-        self.body_quat_relative_w[env_ids] = _wxyz_to_xyzw(
-            self.motion_lib.get_body_quat_w(
-                self.motion_ids[env_ids], self.motion_start_time_steps[env_ids]
-            )
+        self.body_quat_relative_w[env_ids] = self.motion_lib.get_body_quat_w(
+            self.motion_ids[env_ids], self.motion_start_time_steps[env_ids]
         )
 
     @property
@@ -1036,7 +1009,7 @@ class TrackingCommand(CommandTerm):
 
         delta_pos_w = robot_anchor_pos_w_repeat.clone()  # Root position of the robot
         delta_pos_w[..., 2] = anchor_pos_w_repeat[..., 2]
-        delta_ori_w = yaw_quat(
+        delta_ori_w = torch_transform.get_heading_q(
             quat_mul(robot_anchor_quat_w_repeat, quat_inv(anchor_quat_w_repeat))
         )
         body_pos_relative_w_multi_frame = delta_pos_w + quat_apply(
@@ -1099,15 +1072,15 @@ class TrackingCommand(CommandTerm):
         anchor_pos_projected_expanded = anchor_pos_projected.view(N, F, 1, 3).expand(N, F, B, 3)
 
         # Get anchor quaternions for each future frame
-        body_quat_w = _wxyz_to_xyzw(
-            self.motion_lib.get_body_quat_w_full(
-                self.future_motion_ids, self.future_time_steps
-            )
+        body_quat_w = self.motion_lib.get_body_quat_w_full(
+            self.future_motion_ids, self.future_time_steps
         ).view(N, F, B, 4)
         anchor_quat_w = body_quat_w[:, :, anchor_body_idx_full, :]  # [N, F, 4]
 
         # Extract heading quaternion using get_heading_q (canonicalize)
-        anchor_heading_quat = yaw_quat(anchor_quat_w.reshape(-1, 4)).reshape(N, F, 4)
+        anchor_heading_quat = torch_transform.get_heading_q(anchor_quat_w.reshape(-1, 4)).reshape(
+            N, F, 4
+        )
         anchor_heading_quat_expanded = anchor_heading_quat.view(N, F, 1, 4).expand(N, F, B, 4)
 
         # Compute egocentric positions:
@@ -1135,10 +1108,8 @@ class TrackingCommand(CommandTerm):
         N, F, B = self.num_envs, self.num_future_frames, self.num_bodies_full
 
         # Get full body quaternions in world frame for all future frames
-        body_quat_w = _wxyz_to_xyzw(
-            self.motion_lib.get_body_quat_w_full(
-                self.future_motion_ids, self.future_time_steps
-            )
+        body_quat_w = self.motion_lib.get_body_quat_w_full(
+            self.future_motion_ids, self.future_time_steps
         ).view(N, F, B, 4)
 
         # Get anchor quaternions for each future frame
@@ -1148,7 +1119,9 @@ class TrackingCommand(CommandTerm):
         anchor_quat_w = body_quat_w[:, :, anchor_body_idx_full, :]  # [N, F, 4]
 
         # Extract heading quaternion using get_heading_q (canonicalize)
-        anchor_heading_quat = yaw_quat(anchor_quat_w.reshape(-1, 4)).reshape(N, F, 4)
+        anchor_heading_quat = torch_transform.get_heading_q(anchor_quat_w.reshape(-1, 4)).reshape(
+            N, F, 4
+        )
         anchor_heading_quat_expanded = anchor_heading_quat.view(N, F, 1, 4).expand(N, F, B, 4)
 
         # Compute relative rotation: q_relative = q_heading_inv * q_body
@@ -1194,10 +1167,8 @@ class TrackingCommand(CommandTerm):
         ).view(N, F, 3)
 
         # Get root quaternions for all future frames
-        root_quat_w = _wxyz_to_xyzw(
-            self.motion_lib.get_root_quat_w(
-                self.future_motion_ids, self.future_time_steps
-            )
+        root_quat_w = self.motion_lib.get_root_quat_w(
+            self.future_motion_ids, self.future_time_steps
         ).view(N, F, 4)
 
         # First frame as reference - use projected root (z=0)
@@ -1207,7 +1178,9 @@ class TrackingCommand(CommandTerm):
 
         # Extract heading quaternion using get_heading_q (canonicalize)
         first_frame_quat = root_quat_w[:, 0:1, :]  # [N, 1, 4]
-        first_frame_heading = yaw_quat(first_frame_quat.reshape(-1, 4)).reshape(N, 1, 4)
+        first_frame_heading = torch_transform.get_heading_q(
+            first_frame_quat.reshape(-1, 4)
+        ).reshape(N, 1, 4)
 
         # Relative position: delta from projected first frame, rotated to heading frame
         delta_pos_w = root_pos_w - first_frame_pos_projected.expand(N, F, 3)
@@ -1301,7 +1274,7 @@ class TrackingCommand(CommandTerm):
         """
         smpl_body_pose = self.smpl_body_pose.reshape(-1, 23, 3)
         quat = torch_transform.angle_axis_to_quaternion(smpl_body_pose)
-        mat = matrix_from_quat(_wxyz_to_xyzw(quat))
+        mat = matrix_from_quat(quat)
         smpl_body_pose_6d = mat[..., :2].reshape(smpl_body_pose.shape[0], -1)
         return smpl_body_pose_6d
 
@@ -1360,7 +1333,7 @@ class TrackingCommand(CommandTerm):
         if self.motion_lib.smpl_y_up:
             root_quat = self.smpl_root_ytoz_up(root_quat)
         root_quat = rotations.remove_smpl_base_rot(root_quat, w_last=False)
-        return _wxyz_to_xyzw(root_quat)
+        return root_quat
 
     @property
     def smpl_root_quat_w_multi_future(self) -> torch.Tensor:
@@ -1378,7 +1351,7 @@ class TrackingCommand(CommandTerm):
         root_quat = rotations.remove_smpl_base_rot(root_quat, w_last=False).view(
             self.num_envs, self.smpl_num_future_frames, 4
         )
-        return _wxyz_to_xyzw(root_quat)
+        return root_quat
 
     @property
     def smpl_root_quat_w_dif_l_multi_future(self) -> torch.Tensor:
@@ -1397,7 +1370,6 @@ class TrackingCommand(CommandTerm):
         if self.motion_lib.smpl_y_up:
             root_quat = self.smpl_root_ytoz_up(root_quat)
         root_quat = rotations.remove_smpl_base_rot(root_quat, w_last=False)
-        root_quat = _wxyz_to_xyzw(root_quat)
         root_rot_dif = quat_mul(
             quat_inv(
                 self.robot_anchor_quat_w.view(self.num_envs, 1, 4).repeat(
@@ -1428,10 +1400,8 @@ class TrackingCommand(CommandTerm):
         if self.motion_lib.smpl_y_up:
             smpl_root_quat = self.smpl_root_ytoz_up(smpl_root_quat)
         smpl_root_quat = rotations.remove_smpl_base_rot(smpl_root_quat, w_last=False)
-        smpl_root_quat = _wxyz_to_xyzw(smpl_root_quat).view(
-            self.num_envs, self.smpl_num_future_frames, 4
-        )
-        ref_first_heading = yaw_quat(smpl_root_quat[:, 0, :])
+        smpl_root_quat = smpl_root_quat.view(self.num_envs, self.smpl_num_future_frames, 4)
+        ref_first_heading = torch_transform.get_heading_q(smpl_root_quat[:, 0, :])
         root_rot_dif = quat_mul(
             quat_inv(
                 ref_first_heading.view(self.num_envs, 1, 4).expand(
@@ -1461,7 +1431,6 @@ class TrackingCommand(CommandTerm):
         if self.motion_lib.smpl_y_up:
             root_quat = self.smpl_root_ytoz_up(root_quat)
         root_quat = rotations.remove_smpl_base_rot(root_quat, w_last=False)
-        root_quat = _wxyz_to_xyzw(root_quat)
         root_rot_dif = quat_mul(
             quat_inv(
                 self.anchor_heading_quat.view(self.num_envs, 1, 4).expand(
@@ -1491,7 +1460,7 @@ class TrackingCommand(CommandTerm):
             -1, self.smpl_num_future_frames, 23, 3
         )
         quat = torch_transform.angle_axis_to_quaternion(smpl_body_pose)
-        mat = matrix_from_quat(_wxyz_to_xyzw(quat))
+        mat = matrix_from_quat(quat)
         smpl_body_pose_6d = mat[..., :2].reshape(smpl_body_pose.shape[0], -1)
         return smpl_body_pose_6d
 
@@ -1779,9 +1748,9 @@ class TrackingCommand(CommandTerm):
 
     @property
     def root_quat_multi_future(self) -> torch.Tensor:
-        return _wxyz_to_xyzw(
-            self.motion_lib.get_root_quat_w(self.future_motion_ids, self.future_time_steps)
-        ).view(self.num_envs, -1)
+        return self.motion_lib.get_root_quat_w(self.future_motion_ids, self.future_time_steps).view(
+            self.num_envs, -1
+        )
 
     @property
     def root_z(self) -> torch.Tensor:
@@ -1907,28 +1876,28 @@ class TrackingCommand(CommandTerm):
         Returns:
             Tensor of shape ``(num_envs, num_bodies, 4)``.
         """
-        return _wxyz_to_xyzw(
-            self.motion_lib.get_body_quat_w(
-                self.motion_ids, self.motion_start_time_steps + self.time_steps
-            )
+        return self.motion_lib.get_body_quat_w(
+            self.motion_ids, self.motion_start_time_steps + self.time_steps
         )
 
     @property
     def body_quat_w_multi_future(self) -> torch.Tensor:
-        return _wxyz_to_xyzw(
-            self.motion_lib.get_body_quat_w(self.future_motion_ids, self.future_time_steps)
-        ).view(self.num_envs, -1)
+        return self.motion_lib.get_body_quat_w(self.future_motion_ids, self.future_time_steps).view(
+            self.num_envs, -1
+        )
 
     @property
     def body_quat_dif_w(self) -> torch.Tensor:
-        body_quat_w = self.body_quat_w
+        body_quat_w = self.motion_lib.get_body_quat_w(
+            self.motion_ids, self.motion_start_time_steps + self.time_steps
+        )
         body_quat_dif = quat_mul(quat_inv(body_quat_w), self.robot_body_quat_w)
         return body_quat_dif
 
     @property
     def body_quat_dif_w_multi_future(self) -> torch.Tensor:
-        ref_body_quat_w = _wxyz_to_xyzw(
-            self.motion_lib.get_body_quat_w(self.future_motion_ids, self.future_time_steps)
+        ref_body_quat_w = self.motion_lib.get_body_quat_w(
+            self.future_motion_ids, self.future_time_steps
         ).view(self.num_envs, self.num_future_frames, -1, 4)
         robot_body_quat_w = self.robot_body_quat_w.view(
             self.num_envs, 1, self.num_bodies, 4
@@ -1943,7 +1912,7 @@ class TrackingCommand(CommandTerm):
         Returns:
             Tensor of shape ``(num_envs, 4)``.
         """
-        return yaw_quat(self.robot_anchor_quat_w)
+        return torch_transform.get_heading_q(self.robot_anchor_quat_w)
 
     # @property
     # def body_quat_dif_l(self) -> torch.Tensor:
@@ -1972,10 +1941,8 @@ class TrackingCommand(CommandTerm):
         Returns:
             Tensor of shape ``(num_envs, 6)``.
         """
-        ref_root_quat = _wxyz_to_xyzw(
-            self.motion_lib.get_root_quat_w(
-                self.motion_ids, self.motion_start_time_steps + self.time_steps
-            )
+        ref_root_quat = self.motion_lib.get_root_quat_w(
+            self.motion_ids, self.motion_start_time_steps + self.time_steps
         )
         root_rot_dif_w = quat_mul(quat_inv(self.robot_anchor_quat_w), ref_root_quat)
         # root_heading = self.anchor_heading_quat.view(self.num_envs, 1, 4).repeat(1, 1, 1)
@@ -1994,8 +1961,8 @@ class TrackingCommand(CommandTerm):
         Returns:
             Tensor of shape ``(num_envs, num_future_frames * 6)``.
         """
-        ref_root_quat = _wxyz_to_xyzw(
-            self.motion_lib.get_root_quat_w(self.future_motion_ids, self.future_time_steps)
+        ref_root_quat = self.motion_lib.get_root_quat_w(
+            self.future_motion_ids, self.future_time_steps
         )
         root_rot_dif = quat_mul(
             quat_inv(
@@ -2022,8 +1989,8 @@ class TrackingCommand(CommandTerm):
             torch.Tensor: 6D rotation matrix representation (first 2 columns),
                 shape (num_envs, num_future_frames * 6)
         """
-        ref_root_quat = _wxyz_to_xyzw(
-            self.motion_lib.get_root_quat_w(self.future_motion_ids, self.future_time_steps)
+        ref_root_quat = self.motion_lib.get_root_quat_w(
+            self.future_motion_ids, self.future_time_steps
         )
         # Use only the heading (yaw) of the robot orientation for canonicalization
         root_rot_dif = quat_mul(
@@ -2050,11 +2017,11 @@ class TrackingCommand(CommandTerm):
             torch.Tensor: 6D rotation matrix representation (first 2 columns),
                 shape (num_envs, num_future_frames * 6)
         """
-        ref_root_quat = _wxyz_to_xyzw(
-            self.motion_lib.get_root_quat_w(self.future_motion_ids, self.future_time_steps)
+        ref_root_quat = self.motion_lib.get_root_quat_w(
+            self.future_motion_ids, self.future_time_steps
         ).view(self.num_envs, self.num_future_frames, 4)
         # Use the heading of the first future frame as the canonical frame
-        ref_first_heading = yaw_quat(ref_root_quat[:, 0, :])
+        ref_first_heading = torch_transform.get_heading_q(ref_root_quat[:, 0, :])
         root_rot_dif = quat_mul(
             quat_inv(
                 ref_first_heading.view(self.num_envs, 1, 4).expand(-1, self.num_future_frames, -1)
@@ -2074,25 +2041,25 @@ class TrackingCommand(CommandTerm):
         Returns:
             torch.Tensor: 6D rotation matrix representation, shape (num_envs, 6)
         """
-        ref_root_quat = _wxyz_to_xyzw(
-            self.motion_lib.get_root_quat_w(self.future_motion_ids, self.future_time_steps)
+        ref_root_quat = self.motion_lib.get_root_quat_w(
+            self.future_motion_ids, self.future_time_steps
         ).view(self.num_envs, self.num_future_frames, 4)
-        ref_first_heading = yaw_quat(ref_root_quat[:, 0, :])
+        ref_first_heading = torch_transform.get_heading_q(ref_root_quat[:, 0, :])
         heading_diff = quat_mul(quat_inv(self.anchor_heading_quat), ref_first_heading)
         mat = matrix_from_quat(heading_diff)
         return mat[..., :2].reshape(self.num_envs, -1)  # (num_envs, 6)
 
     @property
     def raw_root_quat_w_multi_future(self) -> torch.Tensor:
-        ref_root_quat = _wxyz_to_xyzw(
-            self.motion_lib.get_root_quat_w(self.future_motion_ids, self.future_time_steps)
+        ref_root_quat = self.motion_lib.get_root_quat_w(
+            self.future_motion_ids, self.future_time_steps
         )
         return ref_root_quat.reshape(self.num_envs, self.num_future_frames, 4)
 
     @property
     def root_rot_w_multi_future(self) -> torch.Tensor:
-        ref_root_quat = _wxyz_to_xyzw(
-            self.motion_lib.get_root_quat_w(self.future_motion_ids, self.future_time_steps)
+        ref_root_quat = self.motion_lib.get_root_quat_w(
+            self.future_motion_ids, self.future_time_steps
         )
         mat = matrix_from_quat(ref_root_quat)
         root_rot_w_mat = mat[..., :2].reshape(mat.shape[0], -1)
@@ -2188,11 +2155,9 @@ class TrackingCommand(CommandTerm):
         Returns:
             Tensor of shape ``(num_envs, 4)``.
         """
-        return _wxyz_to_xyzw(
-            self.motion_lib.get_body_quat_w(
-                self.motion_ids, self.motion_start_time_steps + self.time_steps
-            )[:, self.motion_anchor_body_index]
-        )
+        return self.motion_lib.get_body_quat_w(
+            self.motion_ids, self.motion_start_time_steps + self.time_steps
+        )[:, self.motion_anchor_body_index]
 
     @property
     def anchor_quat_w_multi_future(self) -> torch.Tensor:
@@ -2201,11 +2166,9 @@ class TrackingCommand(CommandTerm):
         Returns:
             Tensor of shape ``(num_envs, num_future_frames * 4)``.
         """
-        return _wxyz_to_xyzw(
-            self.motion_lib.get_body_quat_w(self.future_motion_ids, self.future_time_steps)[
-                :, self.motion_anchor_body_index
-            ]
-        ).reshape(self.num_envs, -1)
+        return self.motion_lib.get_body_quat_w(self.future_motion_ids, self.future_time_steps)[
+            :, self.motion_anchor_body_index
+        ].reshape(self.num_envs, -1)
 
     @property
     def anchor_ori_refheading(self) -> torch.Tensor:
@@ -2217,7 +2180,7 @@ class TrackingCommand(CommandTerm):
         Returns:
             torch.Tensor: 6D rotation matrix representation, shape (num_envs, 6)
         """
-        ref_heading = yaw_quat(self.anchor_quat_w)
+        ref_heading = torch_transform.get_heading_q(self.anchor_quat_w)
         ori = quat_mul(quat_inv(ref_heading), self.anchor_quat_w)
         mat = matrix_from_quat(ori)
         return mat[..., :2].reshape(self.num_envs, -1)
@@ -2264,35 +2227,27 @@ class TrackingCommand(CommandTerm):
 
     @property
     def vr_3point_body_quat_w(self) -> torch.Tensor:
-        return _wxyz_to_xyzw(
-            self.motion_lib.get_body_quat_w(
-                self.motion_ids, self.motion_start_time_steps + self.time_steps
-            )[:, self.vr_3point_body_indices_motion]
-        )
+        return self.motion_lib.get_body_quat_w(
+            self.motion_ids, self.motion_start_time_steps + self.time_steps
+        )[:, self.vr_3point_body_indices_motion]
 
     @property
     def reward_point_body_quat_w(self) -> torch.Tensor:
-        return _wxyz_to_xyzw(
-            self.motion_lib.get_body_quat_w(
-                self.motion_ids, self.motion_start_time_steps + self.time_steps
-            )[:, self.reward_point_body_indices_motion]
-        )
+        return self.motion_lib.get_body_quat_w(
+            self.motion_ids, self.motion_start_time_steps + self.time_steps
+        )[:, self.reward_point_body_indices_motion]
 
     @property
     def vr_3point_body_quat_w_multi_future(self) -> torch.Tensor:
-        return _wxyz_to_xyzw(
-            self.motion_lib.get_body_quat_w(self.future_motion_ids, self.future_time_steps)[
-                :, self.vr_3point_body_indices_motion
-            ]
-        ).view(self.num_envs, self.num_future_frames, len(self.cfg.vr_3point_body), -1)
+        return self.motion_lib.get_body_quat_w(self.future_motion_ids, self.future_time_steps)[
+            :, self.vr_3point_body_indices_motion
+        ].view(self.num_envs, self.num_future_frames, len(self.cfg.vr_3point_body), -1)
 
     @property
     def head_orn_w_multi_future(self) -> torch.Tensor:
-        return _wxyz_to_xyzw(
-            self.motion_lib.get_body_quat_w(self.future_motion_ids, self.future_time_steps)[
-                :, self.vr_3point_body_indices_motion[2]
-            ]
-        ).view(self.num_envs, self.num_future_frames, -1)
+        return self.motion_lib.get_body_quat_w(self.future_motion_ids, self.future_time_steps)[
+            :, self.vr_3point_body_indices_motion[2]
+        ].view(self.num_envs, self.num_future_frames, -1)
 
     @property
     def reward_point_body_pos_w(self) -> torch.Tensor:
@@ -2397,10 +2352,8 @@ class TrackingCommand(CommandTerm):
             Tensor of shape ``(num_envs, 4)``.
         """
         if self.use_ref_motion_root_quat_w_as_anchor or getattr(self, "_offline", False):
-            ref_root_quat = _wxyz_to_xyzw(
-                self.motion_lib.get_root_quat_w(
-                    self.motion_ids, self.motion_start_time_steps + self.time_steps
-                )
+            ref_root_quat = self.motion_lib.get_root_quat_w(
+                self.motion_ids, self.motion_start_time_steps + self.time_steps
             )
             if self.ref_motion_root_rotation_noise is not None:
                 ref_root_quat = quat_mul(ref_root_quat, self.ref_motion_root_rotation_noise)
@@ -3046,8 +2999,6 @@ class TrackingCommand(CommandTerm):
                 self._update_per_env_first_contact(env_ids)
 
         root_pos = self.body_pos_w[:, 0].clone()
-        # Public TrackingCommand quaternion properties use Isaac Lab's xyzw
-        # convention even though MotionLib stores scalar-first values internally.
         root_ori = self.body_quat_w[:, 0].clone()
         root_lin_vel = self.body_lin_vel_w[:, 0].clone()
         root_ang_vel = self.body_ang_vel_w[:, 0].clone()
@@ -3147,11 +3098,7 @@ class TrackingCommand(CommandTerm):
                 zero_vel = torch.zeros(len(env_ids), 6, device=self.device)
                 obj.write_root_state_to_sim(
                     torch.cat(
-                        [
-                            obj_pos,
-                            _wxyz_to_xyzw(self.object_root_quat[env_ids, 0]),
-                            zero_vel,
-                        ],
+                        [obj_pos, self.object_root_quat[env_ids, 0], zero_vel],
                         dim=-1,
                     ),
                     env_ids=env_ids,
@@ -3164,7 +3111,7 @@ class TrackingCommand(CommandTerm):
             # Move all other objects to inactive positions (far away from robot)
             # Spread objects vertically (Z-axis) - envs naturally separate in X,Y via env_origins
             inactive_base = INACTIVE_OBJECT_BASE_OFFSET.to(self.device)
-            inactive_quat = torch.tensor([[0.0, 0.0, 0.0, 1.0]], device=self.device).expand(
+            inactive_quat = torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=self.device).expand(
                 len(env_ids), -1
             )
 
@@ -3194,14 +3141,7 @@ class TrackingCommand(CommandTerm):
             # Reset with zero velocity to prevent velocity carryover between episodes
             zero_vel = torch.zeros(len(env_ids), 6, device=self.device)
             obj.write_root_state_to_sim(
-                torch.cat(
-                    [
-                        obj_pos,
-                        _wxyz_to_xyzw(self.object_root_quat[env_ids, 0]),
-                        zero_vel,
-                    ],
-                    dim=-1,
-                ),
+                torch.cat([obj_pos, self.object_root_quat[env_ids, 0], zero_vel], dim=-1),
                 env_ids=env_ids,
             )
         if "table" in self._env.scene.rigid_objects:
@@ -3251,9 +3191,7 @@ class TrackingCommand(CommandTerm):
                     )
                     table_pos = table_pos + table_offset
 
-                table_root_pose = torch.cat(
-                    [table_pos, _wxyz_to_xyzw(table_quat)], dim=-1
-                )
+                table_root_pose = torch.cat([table_pos, table_quat], dim=-1)
                 table.write_root_pose_to_sim(table_root_pose, env_ids=env_ids)
 
         anchor_pos_w_repeat = self.anchor_pos_w[:, None, :].repeat(1, len(self.cfg.body_names), 1)
@@ -3267,7 +3205,7 @@ class TrackingCommand(CommandTerm):
 
         delta_pos_w = robot_anchor_pos_w_repeat  # Root position of the robot
         delta_pos_w[..., 2] = anchor_pos_w_repeat[..., 2]
-        delta_ori_w = yaw_quat(
+        delta_ori_w = torch_transform.get_heading_q(
             quat_mul(robot_anchor_quat_w_repeat, quat_inv(anchor_quat_w_repeat))
         )
 
@@ -3287,10 +3225,14 @@ class TrackingCommand(CommandTerm):
         """
         if self.use_adaptive_sampling:
             with common.Timer("update_adaptive_sampling"):
-                cur_time_steps = self.motion_start_time_steps + self.time_steps
-                self.motion_lib.update_adaptive_sampling(
-                    self._env.reset_terminated, self.motion_ids, cur_time_steps
-                )
+                if self._adp_snapshot_valid:
+                    self.motion_lib.update_adaptive_sampling(
+                        self._env.reset_terminated,
+                        self._adp_prev_motion_ids,
+                        self._adp_prev_cursor,
+                    )
+                    # A snapshot is valid for exactly one physics step.
+                    self._adp_snapshot_valid = False
         self.time_steps += 1
         env_ids = torch.where(
             self.time_steps + self.motion_start_time_steps
@@ -3311,7 +3253,7 @@ class TrackingCommand(CommandTerm):
 
             ray_starts_w = root_pos_w.unsqueeze(1).expand(-1, self.num_rays, -1)
             root_quat_expanded = (
-                yaw_quat(root_quat_w)
+                torch_transform.get_heading_q(root_quat_w)
                 .unsqueeze(1)
                 .expand(-1, self.num_rays, -1)
             )
@@ -4130,7 +4072,7 @@ class TrackingCommandCfg(CommandTermCfg):
 
     motion_lib_cfg: dict = None
     motion_file: str = None
-    smpl_motion_file: str = "data/bones_seed_smpl/extracted/smpl_filtered"
+    smpl_motion_file: str = None
     filter_motion_keys: list[str] = None
     use_paired_motions: bool = False
     # Contact-based initialization: sample timestamps before first contact frame

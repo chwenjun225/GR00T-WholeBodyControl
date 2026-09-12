@@ -13,12 +13,12 @@ from isaaclab.utils.math import (
     quat_inv,
     quat_mul,
     subtract_frame_transforms,
-    yaw_quat,
 )
 import torch
 
 from gear_sonic.envs.env_utils import joint_utils
 from gear_sonic.envs.manager_env.mdp import commands, utils
+from gear_sonic.trl.utils import torch_transform
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
@@ -27,6 +27,44 @@ if TYPE_CHECKING:
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
+
+# Joint ordering constants (Mujoco order for compatibility)
+G1_MUJOCO_ORDER = [
+    "left_hip_pitch_joint",
+    "left_hip_roll_joint",
+    "left_hip_yaw_joint",
+    "left_knee_joint",
+    "left_ankle_pitch_joint",
+    "left_ankle_roll_joint",
+    "right_hip_pitch_joint",
+    "right_hip_roll_joint",
+    "right_hip_yaw_joint",
+    "right_knee_joint",
+    "right_ankle_pitch_joint",
+    "right_ankle_roll_joint",
+    "waist_yaw_joint",
+    "waist_roll_joint",
+    "waist_pitch_joint",
+    "left_shoulder_pitch_joint",
+    "left_shoulder_roll_joint",
+    "left_shoulder_yaw_joint",
+    "left_elbow_joint",
+    "left_wrist_roll_joint",
+    "left_wrist_pitch_joint",
+    "left_wrist_yaw_joint",
+    "right_shoulder_pitch_joint",
+    "right_shoulder_roll_joint",
+    "right_shoulder_yaw_joint",
+    "right_elbow_joint",
+    "right_wrist_roll_joint",
+    "right_wrist_pitch_joint",
+    "right_wrist_yaw_joint",
+]
+
+# Index mappings for 29 DOF
+isaaclab_to_mujoco_dof = [joint_utils.G1_ISAACLab_ORDER.index(i) for i in G1_MUJOCO_ORDER]
+mujoco_to_isaaclab = [G1_MUJOCO_ORDER.index(i) for i in joint_utils.G1_ISAACLab_ORDER]
+
 
 @configclass
 class PolicyCfg(ObsGroup):
@@ -123,8 +161,9 @@ class PolicyCfg(ObsGroup):
 class PolicyAtmCfg(ObsGroup):
     """Observations for action_transform_module (ATM).
 
-    This group extracts the active robot's configured policy joints, excluding
-    any extra articulation joints such as fingers.
+    This observation group provides body-only observations (29 DOF) for use with
+    pre-trained action_transform_module. When using a 43 DOF robot (29 body + 14 hand),
+    this group extracts only the body joint observations matching ATM's expected input.
 
     NOTE: Order must match the observations the pretrained ATM was trained with.
     """
@@ -876,7 +915,7 @@ def motion_anchor_yaw_b(env: ManagerBasedEnv, command_name: str) -> torch.Tensor
         command.anchor_pos_w,
         command.anchor_quat_w,
     )
-    yaw = yaw_quat(ori)
+    yaw = torch_transform.get_heading_q(ori)
     return yaw.view(env.num_envs, -1)
 
 
@@ -891,7 +930,9 @@ def motion_anchor_ori_heading_b(env: ManagerBasedEnv, command_name: str) -> torc
             shape (num_envs, 6).
     """
     command: commands.TrackingCommand = env.command_manager.get_term(command_name)
-    ref_root_quat = command.anchor_quat_w
+    ref_root_quat = command.motion_lib.get_root_quat_w(
+        command.motion_ids, command.motion_start_time_steps + command.time_steps
+    )
     root_heading_inv = quat_inv(command.anchor_heading_quat).view(env.num_envs, 4)
     deheaded_ref_rot = quat_mul(root_heading_inv, ref_root_quat)
     mat = matrix_from_quat(deheaded_ref_rot)
@@ -1281,7 +1322,7 @@ def head_orn_target_multi_future(env: ManagerBasedEnv, command_name: str) -> tor
         1, command.num_future_frames, 1
     )
     # deheaded_head_quat = quat_mul(head_quat, get_heading_q(quat_inv(root_quat)))
-    deheaded_head_quat = quat_mul(yaw_quat(quat_inv(root_quat)), head_quat)
+    deheaded_head_quat = quat_mul(torch_transform.get_heading_q(quat_inv(root_quat)), head_quat)
     return deheaded_head_quat.view(env.num_envs, -1)
 
 
@@ -1299,7 +1340,7 @@ def vr_3point_orn_target_multi_future(env: ManagerBasedEnv, command_name: str) -
     )
     # deheaded_vr_3point_quat = quat_mul(vr_3point_quat, get_heading_q(quat_inv(root_quat)))
     deheaded_vr_3point_quat = quat_mul(
-        yaw_quat(quat_inv(root_quat)), vr_3point_quat
+        torch_transform.get_heading_q(quat_inv(root_quat)), vr_3point_quat
     )
     return deheaded_vr_3point_quat.view(env.num_envs, -1)
 
@@ -1828,36 +1869,25 @@ def ext_forces(
 # Uses get_body_joint_indices from joint_utils.py
 
 
-def _policy_joint_names(env: ManagerBasedEnv) -> list[str]:
-    names = env.cfg.isaaclab_to_mujoco_mapping.get("isaaclab_dof_joints")
-    if not names:
-        raise ValueError("Active robot mapping does not define isaaclab_dof_joints")
-    return list(names)
-
-
 def joint_pos_wo_hand(env: ManagerBasedEnv, asset_cfg) -> torch.Tensor:
-    """Get policy-joint positions in the active robot's policy order."""
+    """Get joint positions excluding hand joints (29 DOF body only)."""
     asset = env.scene[asset_cfg.name]
-    body_indices = joint_utils.get_body_joint_indices(asset, _policy_joint_names(env))
+    body_indices = joint_utils.get_body_joint_indices(asset)
     return asset.data.joint_pos[:, body_indices] - asset.data.default_joint_pos[:, body_indices]
 
 
 def joint_vel_wo_hand(env: ManagerBasedEnv, asset_cfg) -> torch.Tensor:
-    """Get policy-joint velocities in the active robot's policy order."""
+    """Get joint velocities excluding hand joints (29 DOF body only)."""
     asset = env.scene[asset_cfg.name]
-    body_indices = joint_utils.get_body_joint_indices(asset, _policy_joint_names(env))
+    body_indices = joint_utils.get_body_joint_indices(asset)
     return asset.data.joint_vel[:, body_indices] - asset.data.default_joint_vel[:, body_indices]
 
 
 def last_action_wo_hand(env: ManagerBasedEnv, asset_cfg) -> torch.Tensor:
     """Get last actions excluding hand joints."""
     asset = env.scene[asset_cfg.name]
-    policy_names = _policy_joint_names(env)
-    action = env.action_manager.action
-    if action.shape[-1] == len(policy_names):
-        return action
-    body_indices = joint_utils.get_body_joint_indices(asset, policy_names)
-    return action[:, body_indices]
+    body_indices = joint_utils.get_body_joint_indices(asset)
+    return env.action_manager.action[:, body_indices]
 
 
 def last_meta_action(env: ManagerBasedEnv) -> torch.Tensor:
@@ -1963,7 +1993,7 @@ def diff_body_pos_future_local(env, command_name: str, flatten: bool = False) ->
     # shape: (num_envs, 1, 1, 4)
     ref_root_pos_w = ref_root_pos_w.clone()
     ref_root_pos_w[..., 2] = 0.0
-    ref_root_quat_w = yaw_quat(ref_root_quat_w)
+    ref_root_quat_w = torch_transform.get_heading_q(ref_root_quat_w)
     ref_root_quat_w = ref_root_quat_w.expand(
         command.num_envs, command.num_future_frames, len(command.cfg.body_names), -1
     )
@@ -1974,7 +2004,7 @@ def diff_body_pos_future_local(env, command_name: str, flatten: bool = False) ->
     robot_root_quat_w = command.robot_anchor_quat_w.unsqueeze(1)
     robot_root_pos_w = robot_root_pos_w.clone()
     robot_root_pos_w[..., 2] = 0.0
-    robot_root_quat_w = yaw_quat(robot_root_quat_w)
+    robot_root_quat_w = torch_transform.get_heading_q(robot_root_quat_w)
     robot_root_quat_w = robot_root_quat_w.expand(command.num_envs, len(command.cfg.body_names), -1)
 
     robot_body_pos_local = quat_apply_inverse(
@@ -2011,7 +2041,7 @@ def diff_body_ori_future_local(env, command_name: str, flatten: bool = False) ->
     )
 
     ref_root_quat_w = command.anchor_quat_w.unsqueeze(1).unsqueeze(2)
-    ref_root_quat_w = yaw_quat(ref_root_quat_w)
+    ref_root_quat_w = torch_transform.get_heading_q(ref_root_quat_w)
     ref_root_quat_w = ref_root_quat_w.expand(
         command.num_envs, command.num_future_frames, len(command.cfg.body_names), -1
     )
@@ -2019,7 +2049,7 @@ def diff_body_ori_future_local(env, command_name: str, flatten: bool = False) ->
     robot_body_quat_w = command.robot_body_quat_w.view(command.num_envs, command.num_bodies, -1)
 
     robot_root_quat_w = command.robot_anchor_quat_w.unsqueeze(1)
-    robot_root_quat_w = yaw_quat(robot_root_quat_w)
+    robot_root_quat_w = torch_transform.get_heading_q(robot_root_quat_w)
     robot_root_quat_w = robot_root_quat_w.expand(command.num_envs, len(command.cfg.body_names), -1)
 
     robot_body_quat_local = quat_mul(
@@ -2063,7 +2093,7 @@ def diff_body_lin_vel_future_local(env, command_name: str, flatten: bool = False
 
     ref_root_quat_w = command.anchor_quat_w.unsqueeze(1).unsqueeze(2)
     # shape: (num_envs, 1, 1, 4)
-    ref_root_quat_w = yaw_quat(ref_root_quat_w)
+    ref_root_quat_w = torch_transform.get_heading_q(ref_root_quat_w)
     ref_root_quat_w = ref_root_quat_w.expand(
         command.num_envs, command.num_future_frames, command.num_bodies, -1
     )
@@ -2071,7 +2101,7 @@ def diff_body_lin_vel_future_local(env, command_name: str, flatten: bool = False
 
     robot_body_lin_vel_w = command.robot_body_lin_vel_w
     robot_root_quat_w = command.robot_anchor_quat_w.unsqueeze(1)
-    robot_root_quat_w = yaw_quat(robot_root_quat_w).expand(
+    robot_root_quat_w = torch_transform.get_heading_q(robot_root_quat_w).expand(
         command.num_envs, command.num_bodies, -1
     )
     robot_body_lin_vel_local = quat_apply_inverse(robot_root_quat_w, robot_body_lin_vel_w)
@@ -2104,7 +2134,7 @@ def diff_body_ang_vel_future_local(env, command_name: str, flatten: bool = False
 
     ref_root_quat_w = command.anchor_quat_w.unsqueeze(1).unsqueeze(2)
     # shape: (num_envs, 1, 1, 4)
-    ref_root_quat_w = yaw_quat(ref_root_quat_w)
+    ref_root_quat_w = torch_transform.get_heading_q(ref_root_quat_w)
     ref_root_quat_w = ref_root_quat_w.expand(
         command.num_envs, command.num_future_frames, command.num_bodies, -1
     )
@@ -2112,7 +2142,7 @@ def diff_body_ang_vel_future_local(env, command_name: str, flatten: bool = False
 
     robot_body_ang_vel_w = command.robot_body_ang_vel_w
     robot_root_quat_w = command.robot_anchor_quat_w.unsqueeze(1)
-    robot_root_quat_w = yaw_quat(robot_root_quat_w).expand(
+    robot_root_quat_w = torch_transform.get_heading_q(robot_root_quat_w).expand(
         command.num_envs, command.num_bodies, -1
     )
     robot_body_ang_vel_local = quat_apply_inverse(robot_root_quat_w, robot_body_ang_vel_w)
@@ -2145,7 +2175,7 @@ def height_map(env: ManagerBasedEnv, command_name, random=False) -> torch.Tensor
     scan_dot_pos_w = command.scan_dot_pos_w
 
     robot_root_quat_w_yaw = (
-        yaw_quat(robot_root_quat_w)
+        torch_transform.get_heading_q(robot_root_quat_w)
         .unsqueeze(1)
         .unsqueeze(2)
         .expand(-1, command.num_rays_x, command.num_rays_y, -1)
