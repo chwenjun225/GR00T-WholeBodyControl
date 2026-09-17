@@ -7,6 +7,32 @@ Converts motion sequences with joint positions, velocities, and full body kinema
 import sys
 import os
 
+
+def normalize_motion_data(motion_data):
+    if 'joint_pos' in motion_data:
+        return motion_data
+    required = {'dof', 'root_trans_offset', 'root_rot', 'fps'}
+    if not required.issubset(motion_data):
+        return motion_data
+
+    import numpy as np
+
+    joint_pos = np.asarray(motion_data['dof'])
+    root_pos = np.asarray(motion_data['root_trans_offset'])[:, None, :]
+    root_quat_xyzw = np.asarray(motion_data['root_rot'])
+    root_quat = root_quat_xyzw[:, [3, 0, 1, 2]][:, None, :]
+    dt = 1.0 / float(motion_data['fps'])
+    return {
+        'joint_pos': joint_pos,
+        'joint_vel': np.gradient(joint_pos, dt, axis=0),
+        'body_pos_w': root_pos,
+        'body_quat_w': root_quat,
+        'body_lin_vel_w': np.gradient(root_pos, dt, axis=0),
+        'body_ang_vel_w': np.zeros_like(root_pos),
+        '_body_indexes': np.asarray([0]),
+        'time_step_total': joint_pos.shape[0],
+    }
+
 def convert_motion_data(pkl_file, base_output_dir=None):
     """Convert the motion pickle file to C++ readable formats"""
     
@@ -48,7 +74,10 @@ def convert_motion_data(pkl_file, base_output_dir=None):
     
     # Convert each motion sequence
     success_count = 0
+    normalized_data = {}
     for motion_name, motion_data in data.items():
+        motion_data = normalize_motion_data(motion_data)
+        normalized_data[motion_name] = motion_data
         print(f"\nProcessing: {motion_name}")
         
         # Create individual folder for this motion
@@ -60,7 +89,7 @@ def convert_motion_data(pkl_file, base_output_dir=None):
             success_count += 1
     
     # Create summary file in base directory
-    create_summary_file(data, base_output_dir)
+    create_summary_file(normalized_data, base_output_dir)
     
     print(f"\n✓ Successfully converted {success_count}/{len(data)} motions")
     print(f"Output files saved to: {base_output_dir}/")
@@ -69,7 +98,7 @@ def convert_motion_data(pkl_file, base_output_dir=None):
     joint_count = None
     body_count = None
     if data:
-        first_motion = next(iter(data.values()))
+        first_motion = next(iter(normalized_data.values()))
         joint_count = first_motion['joint_pos'].shape[1]
         body_count = first_motion['body_pos_w'].shape[1]
     
