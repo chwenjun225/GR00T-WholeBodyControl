@@ -38,6 +38,7 @@ skip_glob = [
 
 [tool.pyright]
 reportPrivateImportUsage = false
+extraPaths = ["./external_dependencies/unitree_sdk2_python"]
 
 [tool.ruff]
 line-length = 115
