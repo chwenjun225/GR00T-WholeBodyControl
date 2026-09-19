@@ -11,7 +11,7 @@ from pathlib import Path
 import subprocess
 from typing import Any, Literal, Optional
 
-import yaml
+import yaml # type: ignore
 
 from gear_sonic.utils.network.network_utils import resolve_interface
 
