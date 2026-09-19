@@ -1,7 +1,4 @@
-"""Isaac Sim/PhysX adapter for the existing SONIC Unitree DDS contract.
-
-Construct only after SimulationApp. All Kit/PhysX calls stay on the main thread.
-"""
+"""Isaac Sim adapter for Whole-Body-Control in Unitree DDS."""
 import time
 from pathlib import Path
 

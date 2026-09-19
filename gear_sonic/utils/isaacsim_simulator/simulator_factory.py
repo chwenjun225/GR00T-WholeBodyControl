@@ -1,4 +1,12 @@
-"""Isaac Sim factory. Kit must be owned by the calling main thread."""
+"""Factory for creating and launching IsaacSim with Unitree SDK channel setup."""
+
+import time 
+from typing import Any, Dict 
+
+from unitree_sdk2py.core.channel import ChannelFactoryInitialize
+
+from gear_sonic.utils.isaacsim_simulator import Base
+
 
 
 def init_channel(config):

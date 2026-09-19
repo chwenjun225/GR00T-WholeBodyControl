@@ -19,7 +19,8 @@ ArgsConfig = SimLoopConfig
 
 
 class SimWrapper:
-    def __init__(self, robot_model: RobotModel, env_name: str, config: Dict[str, any], **kwargs):
+    def __init__(self, robot_model: RobotModel, env_name: str, 
+                 config: Dict[str, any], **kwargs):
         self.robot_model = robot_model
         self.config = config
 
