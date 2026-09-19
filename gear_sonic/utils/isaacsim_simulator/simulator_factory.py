@@ -1,8 +1,11 @@
-"""Factory for creating and launching IsaacSim with Unitree SDK channel setup."""
+"""Factory for the Isaac Sim simulator and Unitree DDS setup."""
 
 def init_channel(config):
     from unitree_sdk2py.core.channel import ChannelFactoryInitialize
-    ChannelFactoryInitialize(config.domain_id, config.interface)
+    if config.interface:
+        ChannelFactoryInitialize(config.domain_id, config.interface)
+    else:
+        ChannelFactoryInitialize(config.domain_id)
 
 
 class SimulatorFactory:
@@ -15,5 +18,7 @@ class SimulatorFactory:
     def start_simulator(simulator):
         try:
             simulator.start()
+        except KeyboardInterrupt:
+            print("Isaac Sim adapter interrupted by user.")
         finally:
             simulator.close()

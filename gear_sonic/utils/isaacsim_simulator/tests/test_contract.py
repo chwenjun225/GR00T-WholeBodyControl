@@ -96,7 +96,7 @@ class BridgeTests(unittest.TestCase):
                 self.samples = []
                 channels.append(self)
             def Init(self, handler=None, *args):
-                # Force the initialization race found in the copied bridge.
+                # Force the initialization race found in the copied bridge
                 if handler is not None:
                     handler(message())
             def Write(self, sample):
@@ -181,10 +181,14 @@ class LoopTests(unittest.TestCase):
         from gear_sonic.utils.isaacsim_simulator.base_sim import BaseSimulator
         sim = BaseSimulator.__new__(BaseSimulator)
         sim.config = types.SimpleNamespace(inspect=False, with_hands=True, physics_dt=.002,
-                                          render_every=10, command_timeout=.5)
+                                          render_every=10, command_timeout=.5,
+                                          headless=True, realtime=False)
         sim.app = Mock()
         sim.app.is_running.side_effect = [True, False]
-        sim.sim = Mock()
+        sim.timeline = Mock()
+        sim.timeline.is_playing.return_value = True
+        sim._SimulationManager = Mock()
+        sim._RenderingManager = Mock()
         sim._observation = Mock(return_value={})
         return sim
 
@@ -198,7 +202,7 @@ class LoopTests(unittest.TestCase):
             "gear_sonic.utils.isaacsim_simulator.unitree_sdk2py_bridge": fake
         }), patch("gear_sonic.utils.isaacsim_simulator.simulator_factory.init_channel"), patch("time.sleep"):
             sim.start()
-        sim.sim.step.assert_not_called()
+        sim._SimulationManager.step.assert_not_called()
         bridge.PublishLowState.assert_called_once()
 
     def test_stale_body_command_stops_before_physics_step(self):
@@ -212,21 +216,19 @@ class LoopTests(unittest.TestCase):
         }), patch("gear_sonic.utils.isaacsim_simulator.simulator_factory.init_channel"):
             with self.assertRaises(TimeoutError):
                 sim.start()
-        sim.sim.step.assert_not_called()
+        sim._SimulationManager.step.assert_not_called()
 
     def test_valid_command_switches_to_effort_and_steps_once(self):
         import time
         sim = self.make_sim()
         sim.config.realtime = False
-        sim._active = False
         sim.step_count = 0
         sim.indices = {"body": np.array([0])}
         sim.limits = {"body": np.array([2.])}
         sim._last_torque = np.zeros(1)
         sim.robot = Mock()
-        sim.robot.get_joint_positions.return_value = np.zeros(1)
-        sim.robot.get_joint_velocities.return_value = np.zeros(1)
-        sim.controller = Mock()
+        sim.robot.get_dof_positions.return_value = np.zeros((1, 1))
+        sim.robot.get_dof_velocities.return_value = np.zeros((1, 1))
         cmd = message()
         cmd.motor_cmd[0] = motor(q=1, kp=10)
         cmd.motor_cmd[0].mode = 1
@@ -238,9 +240,8 @@ class LoopTests(unittest.TestCase):
             "gear_sonic.utils.isaacsim_simulator.unitree_sdk2py_bridge": fake
         }), patch("gear_sonic.utils.isaacsim_simulator.simulator_factory.init_channel"):
             sim.start()
-        sim.controller.switch_dof_control_mode.assert_called_once_with(0, "effort")
-        np.testing.assert_allclose(sim.robot.set_joint_efforts.call_args.args[0], [2.])
-        sim.sim.step.assert_called_once_with(render=False)
+        np.testing.assert_allclose(sim.robot.set_dof_efforts.call_args.args[0], [[2.]])
+        sim._SimulationManager.step.assert_called_once_with()
         self.assertEqual(sim.step_count, 1)
 
 
