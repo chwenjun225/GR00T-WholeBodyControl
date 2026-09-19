@@ -89,6 +89,26 @@ class BaseSimulator:
         self.indices = map_joints(self.dof_names, self.groups)
         self._last_torque = np.zeros(len(self.dof_names), dtype=float)
 
+        # ===== TEMPORARY INSPECT =====
+        print("\n=== Isaac Sim 6.0.1 Articulation Inspect ===")
+        print("Articulation root:", roots[0].GetPath())
+        print("Total DOFs:", len(self.dof_names))
+
+        for group, names in self.groups.items():
+            print(f"\n[{group}] {len(names)} DOFs")
+            print("DDS index -> Isaac DOF -> joint")
+
+            for dds_index, (name, dof_index) in enumerate(
+                zip(names, self.indices[group])
+            ):
+                print(
+                    f"{dds_index:2d} -> "
+                    f"{dof_index:2d} -> "
+                    f"{name}"
+                )
+        # ===========================
+
+
         controlled = np.unique(np.concatenate(list(self.indices.values()))).astype(np.int32)
         self.robot.switch_dof_control_mode("effort", dof_indices=controlled)
 
