@@ -166,7 +166,7 @@ class BaseSimulator:
         if raw.shape != (43,) or not np.isfinite(raw).all() or np.any(raw <= 0):
             raise ValueError("Expected 43 finite positive SONIC reference effort limits")
 
-        # Shipped order is body[:22], left hand, body[22:], right hand.
+        # Shipped order is body[:22], left hand, body[22:], right hand
         reference = {
             "body": np.r_[raw[:22], raw[29:36]],
             "left_hand": raw[22:29],
@@ -182,6 +182,7 @@ class BaseSimulator:
         return limits
 
     def _observation(self):
+        # TODO: Hàm này có thực sự lấy dữ liệu từ Robot trong IsaacSim không?
         q = _numpy(self.robot.get_dof_positions())[0].astype(np.float64)
         dq = _numpy(self.robot.get_dof_velocities())[0].astype(np.float64)
         positions, orientations = self.base.get_world_poses()
@@ -227,10 +228,38 @@ class BaseSimulator:
         obs["body_tau_est"] = self._last_torque[body].tolist()
         self._last_velocity = velocity.copy()
         self._last_dq = dq.copy()
+
+        # TEMPORARY DEBUG: print all observation values to console
+        print("\n========== ISAAC OBSERVATION ==========")
+        for key, value in obs.items():
+            if isinstance(value, np.ndarray):
+                print(f"{key} ({value.shape}): {value.tolist()}")
+            elif isinstance(value, list):
+                print(f"{key} ({len(value)}): {value}")
+            else:
+                print(f"{key}: {value}")
+        print("=======================================\n")
+
+
         return obs
 
     def start(self):
         if self.config.inspect:
+            print("[IsaacSim] Running observation test...")
+
+            for i in range(10):
+                self._SimulationManager.step()
+
+                obs = self._observation()
+
+                print(f"\n========== STEP {i} ==========")
+                for key, value in obs.items():
+                    if isinstance(value, np.ndarray):
+                        print(f"{key} ({value.shape}): {value.tolist()}")
+                    elif isinstance(value, list):
+                        print(f"{key} ({len(value)}): {value}")
+                    else:
+                        print(f"{key}: {value}")
             return
 
         from .simulator_factory import init_channel
