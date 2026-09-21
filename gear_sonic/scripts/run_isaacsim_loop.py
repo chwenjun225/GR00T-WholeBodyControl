@@ -22,7 +22,7 @@ def parse_args(argv=None) -> SimLoopConfig:
     parser.add_argument("--domain-id", type=int, default=0)
     parser.add_argument("--interface", default="lo",
                         help="DDS interface; empty lets CycloneDDS choose")
-    parser.add_argument("--physics-dt", type=float, default=0.002)
+    parser.add_argument("--physics-dt", type=float, default=0.005)
     parser.add_argument("--render-fps", type=float, default=25.0,
                         help="GUI rendering rate; physics and DDS remain at physics-dt")
     parser.add_argument("--render-every", type=int, default=None,
@@ -39,6 +39,11 @@ def parse_args(argv=None) -> SimLoopConfig:
                         help="Print ten observations, then start the DDS bridge")
     parser.add_argument("--inspect-only", action="store_true",
                         help="Print ten observations and exit without DDS")
+    parser.add_argument("--profile", action="store_true",
+                        help="Print per-block avg/max timing once per second")
+    parser.add_argument("--legacy-state-reader", action="store_false",
+                        dest="use_cpp_data_view",
+                        help="Use individual Python tensor getters instead of batched C++ views")
     hands = parser.add_mutually_exclusive_group()
     hands.add_argument("--with-hands", dest="with_hands", action="store_true",
                        help="Require integrated seven-DOF Dex3 hands")

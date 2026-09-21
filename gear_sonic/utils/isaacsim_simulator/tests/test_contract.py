@@ -14,6 +14,8 @@ import numpy as np
 from gear_sonic.utils.isaacsim_simulator.control import (
     command_torques, joint_groups, map_joints, world_to_body,
 )
+from gear_sonic.utils.isaacsim_simulator.profiling import TimingProfiler
+from gear_sonic.utils.isaacsim_simulator.state_reader import CppStateReader
 from gear_sonic.scripts.run_isaacsim_loop import parse_args
 
 
@@ -33,6 +35,42 @@ def message():
 
 
 class ControlTests(unittest.TestCase):
+    def test_cpp_state_reader_updates_and_wraps_host_buffers(self):
+        class View:
+            def __init__(self, fields):
+                self.fields = fields
+                self.updates = 0
+
+            def update(self):
+                self.updates += 1
+                return True
+
+            def __getattr__(self, name):
+                field = self.fields[name]
+                return lambda: (field.ctypes.data, field.size)
+
+        rigid_view = View({
+            "get_world_positions_host": np.arange(6, dtype=np.float32),
+            "get_world_orientations_host": np.arange(8, dtype=np.float32),
+            "get_linear_velocities_host": np.arange(6, dtype=np.float32) + 20,
+            "get_angular_velocities_host": np.arange(6, dtype=np.float32) + 30,
+        })
+        rigid_bodies = Mock(_cpp_data_view=rigid_view)
+        reader = CppStateReader(rigid_bodies)
+        state = reader.read()
+        np.testing.assert_array_equal(state.positions, [[0, 1, 2], [3, 4, 5]])
+        self.assertEqual(rigid_view.updates, 2)
+
+    def test_timing_profiler_reports_average_maximum_and_count(self):
+        profiler = TimingProfiler()
+        profiler.add("physics", 1_000_000)
+        profiler.add("physics", 3_000_000)
+        self.assertEqual(profiler.format(("physics",)),
+                         "physics=2.000/3.000ms x2")
+        profiler.reset()
+        self.assertEqual(profiler.format(("physics",)),
+                         "physics=0.000/0.000ms x0")
+
     def test_joint_contract_matches_existing_robot_source(self):
         source = Path(__file__).resolve().parents[3] / "data/robot_model/supplemental_info/g1/g1_supplemental_info.py"
         assignments = {}
@@ -78,7 +116,8 @@ class ControlTests(unittest.TestCase):
     def test_cli_validation_without_kit(self):
         with tempfile.NamedTemporaryFile(suffix=".usd") as scene:
             cfg = parse_args(["--usd-path", scene.name, "--robot-path", "/World/G1", "--inspect"])
-            self.assertEqual(cfg.render_every, 20)
+            self.assertEqual(cfg.physics_dt, 0.005)
+            self.assertEqual(cfg.render_every, 8)
             self.assertEqual(cfg.render_fps, 25.0)
             video = parse_args([
                 "--usd-path", scene.name,
@@ -91,6 +130,10 @@ class ControlTests(unittest.TestCase):
             self.assertFalse(cfg.inspect_only)
             self.assertEqual(cfg.domain_id, 0)
             self.assertIsNone(cfg.with_hands)
+            self.assertTrue(parse_args(["--usd-path", scene.name, "--profile"]).profile)
+            self.assertFalse(parse_args([
+                "--usd-path", scene.name, "--legacy-state-reader"
+            ]).use_cpp_data_view)
             inspect_only = parse_args(["--usd-path", scene.name, "--inspect-only"])
             self.assertTrue(inspect_only.inspect_only)
             self.assertFalse(inspect_only.inspect)
@@ -217,6 +260,8 @@ class LoopTests(unittest.TestCase):
         sim._render_enabled = False
         sim._render_every = 20
         sim._video_recorder = None
+        sim._profiler = None
+        sim._profiling_active = False
         return sim
 
     def test_video_capture_uses_simulation_time_without_catchup(self):
@@ -281,6 +326,7 @@ class LoopTests(unittest.TestCase):
         cmd.motor_cmd[0].mode = 1
         bridge = Mock()
         bridge.command_snapshot.return_value = {"body": (cmd, time.monotonic())}
+        bridge.command_stats.return_value = {"received": {"body": 1}}
         fake = types.ModuleType("bridge")
         fake.UnitreeSdk2Bridge = Mock(return_value=bridge)
         with patch.dict(sys.modules, {

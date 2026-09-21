@@ -16,7 +16,7 @@ class SimLoopConfig:
     physics_scene_path: str = "/PhysicsScene"
     domain_id: int = 0
     interface: str | None = "lo"
-    physics_dt: float = 0.002
+    physics_dt: float = 0.005
     render_fps: float = 25.0
     # Legacy override. None derives the interval from render_fps.
     render_every: int | None = None
@@ -29,6 +29,8 @@ class SimLoopConfig:
     headless: bool = False
     inspect: bool = False
     inspect_only: bool = False
+    profile: bool = False
+    use_cpp_data_view: bool = True
     # None means infer integrated Dex3 joints from the loaded articulation.
     with_hands: bool | None = None
     realtime: bool = True

@@ -99,6 +99,10 @@ def _isaac_command(args: argparse.Namespace, repo_root: Path) -> str:
     ]
     if args.headless:
         command.append("--headless")
+    if args.profile:
+        command.append("--profile")
+    if args.legacy_state_reader:
+        command.append("--legacy-state-reader")
     if args.record_video:
         command.extend([
             "--record-video", str(args.record_video),
@@ -150,9 +154,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--physics-scene-path", default="/PhysicsScene")
     parser.add_argument("--interface", default="lo")
     parser.add_argument("--domain-id", type=int, default=0)
-    parser.add_argument("--physics-dt", type=float, default=0.002)
+    parser.add_argument("--physics-dt", type=float, default=0.005)
     parser.add_argument("--render-fps", type=float, default=25.0)
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--profile", action="store_true",
+                        help="Enable per-block Isaac control-loop timing")
+    parser.add_argument("--legacy-state-reader", action="store_true",
+                        help="Disable batched C++ prim-data state reads")
     parser.add_argument("--record-video", type=Path, default=None,
                         help="Write MP4 asynchronously from the Isaac process")
     parser.add_argument("--video-fps", type=float, default=20.0)
