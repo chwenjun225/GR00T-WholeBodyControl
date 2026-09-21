@@ -26,8 +26,12 @@ def parse_args(argv=None) -> SimLoopConfig:
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--inspect", action="store_true",
                         help="Validate scene and print joint map without DDS")
-    parser.add_argument("--with-hands", action="store_true",
-                        help="Require integrated seven-DOF Dex3 hands")
+    hands = parser.add_mutually_exclusive_group()
+    hands.add_argument("--with-hands", dest="with_hands", action="store_true",
+                       help="Require integrated seven-DOF Dex3 hands")
+    hands.add_argument("--without-hands", dest="with_hands", action="store_false",
+                       help="Use only the 29 body joints, even if Dex3 joints are integrated")
+    parser.set_defaults(with_hands=None)
     parser.add_argument("--no-realtime", dest="realtime", action="store_false")
     return SimLoopConfig(**vars(parser.parse_args(argv)))
 
@@ -35,12 +39,13 @@ def parse_args(argv=None) -> SimLoopConfig:
 def main(argv=None) -> None:
     config = parse_args(argv)
     # SimulationApp parses sys.argv again and forwards unknown options to Kit.
-    # Keep this adapter's CLI flags out of the Kit command line.
+    # Keep this adapter's CLI flags out of the Kit command line
     sys.argv = sys.argv[:1]
     from isaacsim import SimulationApp
 
-    # Graceful shutdown preserves Python exceptions and lets DDS channels close.
-    app = SimulationApp({"headless": config.headless, "fast_shutdown": False})
+    # DDS is closed explicitly below. Fast Kit shutdown avoids menu callbacks
+    # racing a USD context that has already been destroyed during app.close()
+    app = SimulationApp({"headless": config.headless, "fast_shutdown": True})
     simulator = None
     try:
         from gear_sonic.utils.isaacsim_simulator.simulator_factory import SimulatorFactory

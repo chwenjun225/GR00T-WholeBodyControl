@@ -80,6 +80,9 @@ class ControlTests(unittest.TestCase):
             cfg = parse_args(["--usd-path", scene.name, "--robot-path", "/World/G1", "--inspect"])
             self.assertTrue(cfg.inspect)
             self.assertEqual(cfg.domain_id, 0)
+            self.assertIsNone(cfg.with_hands)
+            self.assertTrue(parse_args(["--usd-path", scene.name, "--with-hands"]).with_hands)
+            self.assertFalse(parse_args(["--usd-path", scene.name, "--without-hands"]).with_hands)
             with self.assertRaises(ValueError):
                 parse_args(["--usd-path", scene.name, "--robot-path", "/World/G1",
                             "--physics-dt", "nan"])
