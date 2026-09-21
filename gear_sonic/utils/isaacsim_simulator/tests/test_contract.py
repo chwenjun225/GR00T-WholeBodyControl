@@ -79,8 +79,12 @@ class ControlTests(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".usd") as scene:
             cfg = parse_args(["--usd-path", scene.name, "--robot-path", "/World/G1", "--inspect"])
             self.assertTrue(cfg.inspect)
+            self.assertFalse(cfg.inspect_only)
             self.assertEqual(cfg.domain_id, 0)
             self.assertIsNone(cfg.with_hands)
+            inspect_only = parse_args(["--usd-path", scene.name, "--inspect-only"])
+            self.assertTrue(inspect_only.inspect_only)
+            self.assertFalse(inspect_only.inspect)
             self.assertTrue(parse_args(["--usd-path", scene.name, "--with-hands"]).with_hands)
             self.assertFalse(parse_args(["--usd-path", scene.name, "--without-hands"]).with_hands)
             with self.assertRaises(ValueError):
@@ -183,7 +187,8 @@ class LoopTests(unittest.TestCase):
     def make_sim(self):
         from gear_sonic.utils.isaacsim_simulator.base_sim import BaseSimulator
         sim = BaseSimulator.__new__(BaseSimulator)
-        sim.config = types.SimpleNamespace(inspect=False, with_hands=True, physics_dt=.002,
+        sim.config = types.SimpleNamespace(inspect=False, inspect_only=False,
+                                          with_hands=True, physics_dt=.002,
                                           render_every=10, command_timeout=.5,
                                           headless=True, realtime=False)
         sim.app = Mock()

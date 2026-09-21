@@ -1,7 +1,9 @@
 """Run the Isaac Sim 6.0.1 to Unitree DDS adapter."""
 
 import argparse
+from pathlib import Path
 import sys
+import traceback
 
 from gear_sonic.utils.isaacsim_simulator.configs import SimLoopConfig
 
@@ -25,7 +27,9 @@ def parse_args(argv=None) -> SimLoopConfig:
     parser.add_argument("--command-timeout", type=float, default=0.5)
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--inspect", action="store_true",
-                        help="Validate scene and print joint map without DDS")
+                        help="Print ten observations, then start the DDS bridge")
+    parser.add_argument("--inspect-only", action="store_true",
+                        help="Print ten observations and exit without DDS")
     hands = parser.add_mutually_exclusive_group()
     hands.add_argument("--with-hands", dest="with_hands", action="store_true",
                        help="Require integrated seven-DOF Dex3 hands")
@@ -38,6 +42,9 @@ def parse_args(argv=None) -> SimLoopConfig:
 
 def main(argv=None) -> None:
     config = parse_args(argv)
+    vendored_sdk = Path(__file__).resolve().parents[2] / "external_dependencies/unitree_sdk2_python"
+    if vendored_sdk.is_dir():
+        sys.path.insert(0, str(vendored_sdk))
     # SimulationApp parses sys.argv again and forwards unknown options to Kit.
     # Keep this adapter's CLI flags out of the Kit command line
     sys.argv = sys.argv[:1]
@@ -47,15 +54,23 @@ def main(argv=None) -> None:
     # racing a USD context that has already been destroyed during app.close()
     app = SimulationApp({"headless": config.headless, "fast_shutdown": True})
     simulator = None
+    exit_code = 0
     try:
         from gear_sonic.utils.isaacsim_simulator.simulator_factory import SimulatorFactory
 
         simulator = SimulatorFactory.create_simulator(config, app)
         SimulatorFactory.start_simulator(simulator)
+    except BaseException:
+        exit_code = 1
+        traceback.print_exc()
     finally:
         if simulator is not None:
             simulator.close()
-        app.close()
+        # This is a standalone process and BaseSimulator already stops the
+        # timeline, zeros efforts, and closes DDS. Full Kit cleanup can race
+        # GUI/RTX worker threads in Isaac Sim 6.0.1 and segfault in
+        # SimulationApp.close(); use its documented immediate-exit path.
+        app.close(skip_cleanup=True, exit_code=exit_code)
 
 
 if __name__ == "__main__":

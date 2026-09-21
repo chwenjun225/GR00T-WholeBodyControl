@@ -21,6 +21,7 @@ class SimLoopConfig:
     command_timeout: float = 0.5
     headless: bool = False
     inspect: bool = False
+    inspect_only: bool = False
     # None means infer integrated Dex3 joints from the loaded articulation.
     with_hands: bool | None = None
     realtime: bool = True

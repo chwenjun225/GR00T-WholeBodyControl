@@ -236,22 +236,10 @@ class BaseSimulator:
         self._last_velocity = velocity.copy()
         self._last_dq = dq.copy()
 
-        # TEMPORARY DEBUG: print all observation values to console
-        print("\n========== ISAAC OBSERVATION ==========")
-        for key, value in obs.items():
-            if isinstance(value, np.ndarray):
-                print(f"{key} ({value.shape}): {value.tolist()}")
-            elif isinstance(value, list):
-                print(f"{key} ({len(value)}): {value}")
-            else:
-                print(f"{key}: {value}")
-        print("=======================================\n")
-
-
         return obs
 
     def start(self):
-        if self.config.inspect:
+        if self.config.inspect or self.config.inspect_only:
             print("[IsaacSim] Running observation test...")
 
             for i in range(10):
@@ -267,7 +255,8 @@ class BaseSimulator:
                         print(f"{key} ({len(value)}): {value}")
                     else:
                         print(f"{key}: {value}")
-            return
+            if self.config.inspect_only:
+                return
 
         from .simulator_factory import init_channel
         from .unitree_sdk2py_bridge import UnitreeSdk2Bridge
@@ -286,8 +275,16 @@ class BaseSimulator:
 
         deadline = None
         waiting_frames = 0
+        state_publish_reported = False
         while self.app.is_running():
-            self.bridge.PublishLowState(self._observation())
+            observation = self._observation()
+            self.bridge.PublishLowState(observation)
+            if not state_publish_reported:
+                print(
+                    "DDS state published: rt/lowstate, rt/odostate, "
+                    "rt/secondary_imu, rt/dex3/{left,right}/state."
+                )
+                state_publish_reported = True
             snapshot = self.bridge.command_snapshot()
             if snapshot["body"][1] is None:
                 if waiting_frames % self.config.render_every == 0:
