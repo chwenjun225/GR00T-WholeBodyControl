@@ -23,7 +23,16 @@ def parse_args(argv=None) -> SimLoopConfig:
     parser.add_argument("--interface", default="lo",
                         help="DDS interface; empty lets CycloneDDS choose")
     parser.add_argument("--physics-dt", type=float, default=0.002)
-    parser.add_argument("--render-every", type=int, default=10)
+    parser.add_argument("--render-fps", type=float, default=25.0,
+                        help="GUI rendering rate; physics and DDS remain at physics-dt")
+    parser.add_argument("--render-every", type=int, default=None,
+                        help="Legacy override: render once per N physics steps")
+    parser.add_argument("--record-video", default=None, metavar="OUTPUT.mp4",
+                        help="Capture RGB frames and encode MP4 in a worker process")
+    parser.add_argument("--video-fps", type=float, default=20.0)
+    parser.add_argument("--video-width", type=int, default=640)
+    parser.add_argument("--video-height", type=int, default=480)
+    parser.add_argument("--video-camera-path", default="/OmniverseKit_Persp")
     parser.add_argument("--command-timeout", type=float, default=0.5)
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--inspect", action="store_true",

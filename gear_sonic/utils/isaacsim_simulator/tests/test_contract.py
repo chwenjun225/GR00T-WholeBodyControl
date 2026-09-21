@@ -78,6 +78,15 @@ class ControlTests(unittest.TestCase):
     def test_cli_validation_without_kit(self):
         with tempfile.NamedTemporaryFile(suffix=".usd") as scene:
             cfg = parse_args(["--usd-path", scene.name, "--robot-path", "/World/G1", "--inspect"])
+            self.assertEqual(cfg.render_every, 20)
+            self.assertEqual(cfg.render_fps, 25.0)
+            video = parse_args([
+                "--usd-path", scene.name,
+                "--record-video", "capture.mp4",
+                "--video-fps", "20",
+            ])
+            self.assertTrue(video.record_video.endswith("capture.mp4"))
+            self.assertEqual(video.video_fps, 20.0)
             self.assertTrue(cfg.inspect)
             self.assertFalse(cfg.inspect_only)
             self.assertEqual(cfg.domain_id, 0)
@@ -156,6 +165,10 @@ class BridgeTests(unittest.TestCase):
         bad.mode_pr = 1
         self.bridge.LowCmdHandler(bad)
         self.assertEqual(before, self.bridge.command_snapshot()["body"][1])
+        stats = self.bridge.command_stats()
+        self.assertEqual(stats["received"]["body"], 1)
+        self.assertEqual(stats["rejected_body_crc"], 1)
+        self.assertEqual(stats["rejected_body_mode"], 1)
         self.bridge.reset()
         self.assertIsNone(self.bridge.command_snapshot()["body"][1])
 
@@ -198,7 +211,33 @@ class LoopTests(unittest.TestCase):
         sim._SimulationManager = Mock()
         sim._RenderingManager = Mock()
         sim._observation = Mock(return_value={})
+        sim.step_count = 0
+        sim._latest_q = np.zeros(1)
+        sim._latest_dq = np.zeros(1)
+        sim._render_enabled = False
+        sim._render_every = 20
+        sim._video_recorder = None
         return sim
+
+    def test_video_capture_uses_simulation_time_without_catchup(self):
+        sim = self.make_sim()
+        sim.config.video_fps = 20.0
+        sim.config.video_width = 4
+        sim.config.video_height = 3
+        sim._next_video_time = 0.05
+        sim._rgb_annotator = Mock(
+            get_data=Mock(return_value=np.zeros((3, 4, 4), dtype=np.uint8))
+        )
+        sim._video_recorder = Mock()
+
+        sim._capture_video_frame(0.049)
+        sim._video_recorder.submit.assert_not_called()
+        sim._capture_video_frame(0.05)
+        sim._capture_video_frame(0.251)
+
+        self.assertEqual(sim._video_recorder.submit.call_count, 2)
+        self.assertAlmostEqual(sim._next_video_time, 0.30)
+        self.assertEqual(sim._video_recorder.submit.call_args.args[0].shape, (3, 4, 3))
 
     def test_waiting_for_first_command_does_not_step_physics(self):
         sim = self.make_sim()

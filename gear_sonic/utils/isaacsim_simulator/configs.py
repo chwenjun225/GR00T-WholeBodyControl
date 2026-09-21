@@ -17,7 +17,14 @@ class SimLoopConfig:
     domain_id: int = 0
     interface: str | None = "lo"
     physics_dt: float = 0.002
-    render_every: int = 10
+    render_fps: float = 25.0
+    # Legacy override. None derives the interval from render_fps.
+    render_every: int | None = None
+    record_video: str | None = None
+    video_fps: float = 20.0
+    video_width: int = 640
+    video_height: int = 480
+    video_camera_path: str = "/OmniverseKit_Persp"
     command_timeout: float = 0.5
     headless: bool = False
     inspect: bool = False
@@ -35,12 +42,23 @@ class SimLoopConfig:
             value = getattr(self, name)
             if value is not None and (not value.startswith("/") or value == "/"):
                 raise ValueError(f"{name} must be an absolute non-root USD prim path")
-        for name in ("physics_dt", "command_timeout"):
+        for name in ("physics_dt", "render_fps", "video_fps", "command_timeout"):
             value = getattr(self, name)
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive")
-        if self.render_every < 1:
+        if self.render_every is None:
+            self.render_every = max(1, round(1.0 / (self.physics_dt * self.render_fps)))
+        elif self.render_every < 1:
             raise ValueError("render_every must be positive")
+        if self.video_width < 1 or self.video_height < 1:
+            raise ValueError("video_width and video_height must be positive")
+        if not self.video_camera_path.startswith("/"):
+            raise ValueError("video_camera_path must be an absolute USD prim path")
+        if self.record_video:
+            video_path = Path(self.record_video).expanduser()
+            if video_path.suffix.lower() != ".mp4":
+                raise ValueError("record_video must use an .mp4 filename")
+            self.record_video = str(video_path.resolve())
         if not 0 <= self.domain_id <= 232:
             raise ValueError("DDS domain must be between 0 and 232")
         if self.interface == "":

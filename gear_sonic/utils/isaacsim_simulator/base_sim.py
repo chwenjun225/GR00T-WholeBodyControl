@@ -1,5 +1,6 @@
 """Isaac Sim 6.0.1 adapter for SONIC Whole-Body Control over Unitree DDS."""
 
+import contextlib
 from pathlib import Path
 import time
 
@@ -40,6 +41,10 @@ class BaseSimulator:
         self._last_dq = None
         self._last_torque = None
         self._closed = False
+        self._rgb_annotator = None
+        self._render_product = None
+        self._video_recorder = None
+        self._next_video_time = config.video_fps and 1.0 / config.video_fps
 
         # ===== ISAAC 6 LIFECYCLE: open and validate the authored stage =====
         scene_path = str(Path(config.usd_path).expanduser().resolve())
@@ -104,7 +109,24 @@ class BaseSimulator:
         SimulationManager.setup_simulation(dt=config.physics_dt, device="cpu")
         self.physics_scene = PhysicsScene(scene_prim)
         self.physics_scene.set_dt(config.physics_dt)
-        RenderingManager.set_dt(config.physics_dt * config.render_every)
+        gui_render_fps = (1.0 / (config.physics_dt * config.render_every)
+                          if not config.headless else 0.0)
+        target_render_fps = max(
+            gui_render_fps,
+            config.video_fps if config.record_video else 0.0,
+        )
+        self._render_enabled = target_render_fps > 0
+        self._render_every = (
+            max(1, round(1.0 / (config.physics_dt * target_render_fps)))
+            if self._render_enabled else config.render_every
+        )
+        RenderingManager.set_dt(config.physics_dt * self._render_every)
+        if self._render_enabled:
+            actual_render_fps = 1.0 / (config.physics_dt * self._render_every)
+            print(
+                f"[IsaacSim] Physics/DDS={1.0 / config.physics_dt:.1f} Hz; "
+                f"render={actual_render_fps:.1f} FPS"
+            )
         self.robot = Articulation(articulation_path)
         self.base = RigidPrim(base_path)
         self.torso = RigidPrim(torso_path)
@@ -166,6 +188,61 @@ class BaseSimulator:
             for dds_index, (name, dof_index) in enumerate(zip(names, self.indices[group])):
                 print(f"  {dds_index:2d} -> {dof_index:2d} -> {name}")
 
+        if config.record_video:
+            self._setup_video_recording()
+
+    def _setup_video_recording(self):
+        import omni.replicator.core as rep
+        from pxr import UsdGeom
+
+        camera = self.stage.GetPrimAtPath(self.config.video_camera_path)
+        if not camera.IsValid() or not camera.IsA(UsdGeom.Camera):
+            cameras = [str(prim.GetPath()) for prim in self.stage.Traverse()
+                       if prim.IsA(UsdGeom.Camera)]
+            raise ValueError(
+                f"Video camera not found: {self.config.video_camera_path}; "
+                f"available: {cameras}"
+            )
+
+        self._render_product = rep.create.render_product(
+            self.config.video_camera_path,
+            (self.config.video_width, self.config.video_height),
+        )
+        self._rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb", device="cpu")
+        self._rgb_annotator.attach([self._render_product])
+
+        from .video_recorder import AsyncVideoRecorder
+
+        self._video_recorder = AsyncVideoRecorder(
+            self.config.record_video,
+            self.config.video_fps,
+            self.config.video_width,
+            self.config.video_height,
+        )
+        print(
+            f"[video] capture={self.config.video_fps:.1f} FPS "
+            f"camera={self.config.video_camera_path} output={self.config.record_video}"
+        )
+
+    def _capture_video_frame(self, simulation_time: float):
+        if self._video_recorder is None or simulation_time < self._next_video_time:
+            return
+
+        rgb_data = self._rgb_annotator.get_data()
+        if isinstance(rgb_data, dict):
+            rgb_data = rgb_data.get("data", np.array([], dtype=np.uint8))
+        frame = np.asarray(rgb_data, dtype=np.uint8)
+        if frame.size:
+            if frame.ndim == 1:
+                frame = frame.reshape(
+                    self.config.video_height, self.config.video_width, -1
+                )
+            self._video_recorder.submit(frame[:, :, :3])
+
+        video_dt = 1.0 / self.config.video_fps
+        while self._next_video_time <= simulation_time:
+            self._next_video_time += video_dt
+
     def _effort_limits(self):
         path = Path(__file__).parent / "wbc_configs" / "g1_29dof_sonic_model12.yaml"
         with path.open() as stream:
@@ -192,6 +269,8 @@ class BaseSimulator:
         # TODO: Hàm này có thực sự lấy dữ liệu từ Robot trong IsaacSim không?
         q = _numpy(self.robot.get_dof_positions())[0].astype(np.float64)
         dq = _numpy(self.robot.get_dof_velocities())[0].astype(np.float64)
+        self._latest_q = q
+        self._latest_dq = dq
         positions, orientations = self.base.get_world_poses()
         _, torso_orientations = self.torso.get_world_poses()
         linear, angular = self.base.get_velocities()
@@ -276,7 +355,13 @@ class BaseSimulator:
         deadline = None
         waiting_frames = 0
         state_publish_reported = False
+        report_time = time.monotonic()
+        report_step = self.step_count
+        report_commands = 0
+        compute_time = 0.0
+        max_compute_time = 0.0
         while self.app.is_running():
+            compute_start = time.monotonic()
             observation = self._observation()
             self.bridge.PublishLowState(observation)
             if not state_publish_reported:
@@ -287,7 +372,7 @@ class BaseSimulator:
                 state_publish_reported = True
             snapshot = self.bridge.command_snapshot()
             if snapshot["body"][1] is None:
-                if waiting_frames % self.config.render_every == 0:
+                if self._render_enabled and waiting_frames % self._render_every == 0:
                     self._RenderingManager.render()
                 waiting_frames += 1
                 time.sleep(self.config.physics_dt)
@@ -303,8 +388,8 @@ class BaseSimulator:
             if deadline is None:
                 deadline = now
 
-            q = _numpy(self.robot.get_dof_positions())[0]
-            dq = _numpy(self.robot.get_dof_velocities())[0]
+            q = self._latest_q
+            dq = self._latest_dq
             for group, indices in self.indices.items():
                 message, received_at = snapshot[group]
                 if received_at is None or now - received_at > self.config.command_timeout:
@@ -322,8 +407,50 @@ class BaseSimulator:
 
             self._SimulationManager.step()
             self.step_count += 1
-            if self.step_count % self.config.render_every == 0:
+            if self._render_enabled and self.step_count % self._render_every == 0:
                 self._RenderingManager.render()
+                self._capture_video_frame(
+                    self._SimulationManager.get_simulation_time()
+                )
+
+            compute_elapsed = time.monotonic() - compute_start
+            compute_time += compute_elapsed
+            max_compute_time = max(max_compute_time, compute_elapsed)
+
+            report_now = time.monotonic()
+            if report_now - report_time >= 1.0:
+                wall_dt = report_now - report_time
+                steps = self.step_count - report_step
+                stats = self.bridge.command_stats()
+                commands = stats["received"]["body"]
+                command_hz = (commands - report_commands) / wall_dt
+                command_at = stats["last_received_at"]["body"]
+                command_age_ms = ((report_now - command_at) * 1e3
+                                  if command_at is not None else float("inf"))
+                physics_hz = steps / wall_dt
+                mean_compute_ms = compute_time * 1e3 / max(steps, 1)
+                body_tau = self._last_torque[self.indices["body"]]
+                video_status = ""
+                if self._video_recorder is not None:
+                    video = self._video_recorder.stats()
+                    video_status = (
+                        f" video={video['submitted']} dropped={video['dropped']}"
+                    )
+                print(
+                    f"[control] physics={physics_hz:.1f} Hz "
+                    f"rtf={physics_hz * self.config.physics_dt:.2f} "
+                    f"compute={mean_compute_ms:.2f}/{max_compute_time * 1e3:.2f} ms(avg/max) "
+                    f"lowcmd={command_hz:.1f} Hz age={command_age_ms:.2f} ms "
+                    f"|tau|max={np.max(np.abs(body_tau)):.2f} Nm "
+                    f"reject_crc={stats['rejected_body_crc']} "
+                    f"reject_mode={stats['rejected_body_mode']}"
+                    f"{video_status}"
+                )
+                report_time = report_now
+                report_step = self.step_count
+                report_commands = commands
+                compute_time = 0.0
+                max_compute_time = 0.0
 
             deadline += self.config.physics_dt
             if self.config.realtime:
@@ -351,6 +478,15 @@ class BaseSimulator:
             if hasattr(self, "timeline") and self.timeline.is_playing():
                 self.timeline.stop()
         finally:
+            if self._rgb_annotator is not None and self._render_product is not None:
+                with contextlib.suppress(Exception):
+                    self._rgb_annotator.detach([self._render_product])
+            if self._render_product is not None:
+                with contextlib.suppress(Exception):
+                    self._render_product.destroy()
+            if self._video_recorder is not None:
+                self._video_recorder.close()
+                print(f"[video] saved: {self.config.record_video}")
             if self.bridge is not None:
                 self.bridge.close()
 

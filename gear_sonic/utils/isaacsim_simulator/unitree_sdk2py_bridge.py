@@ -36,6 +36,9 @@ class UnitreeSdk2Bridge:
         self.left_hand_cmd_lock = threading.Lock()
         self.right_hand_cmd_lock = threading.Lock()
         self._received_at = {"body": None, "left_hand": None, "right_hand": None}
+        self._received_count = {"body": 0, "left_hand": 0, "right_hand": 0}
+        self._rejected_body_crc = 0
+        self._rejected_body_mode = 0
         self._crc = CRC()
         self.reset()
         # Note that we do not give the mjdata and mjmodel to the UnitreeSdk2Bridge.
@@ -149,13 +152,20 @@ class UnitreeSdk2Bridge:
             self._received_at["right_hand"] = None
 
     def LowCmdHandler(self, msg):
-        if self._crc.Crc(msg) != msg.crc or msg.mode_pr != 0:
+        if self._crc.Crc(msg) != msg.crc:
+            with self.low_cmd_lock:
+                self._rejected_body_crc += 1
+            return
+        if msg.mode_pr != 0:
+            with self.low_cmd_lock:
+                self._rejected_body_mode += 1
             return
         with self.low_cmd_lock:
             self.low_cmd = msg
             self.low_cmd_received = True
             self.new_low_cmd = True
             self._received_at["body"] = time.monotonic()
+            self._received_count["body"] += 1
 
     def LeftHandCmdHandler(self, msg):
         with self.left_hand_cmd_lock:
@@ -163,6 +173,7 @@ class UnitreeSdk2Bridge:
             self.left_hand_cmd_received = True
             self.new_left_hand_cmd = True
             self._received_at["left_hand"] = time.monotonic()
+            self._received_count["left_hand"] += 1
 
     def RightHandCmdHandler(self, msg):
         with self.right_hand_cmd_lock:
@@ -170,6 +181,7 @@ class UnitreeSdk2Bridge:
             self.right_hand_cmd_received = True
             self.new_right_hand_cmd = True
             self._received_at["right_hand"] = time.monotonic()
+            self._received_count["right_hand"] += 1
 
     def command_snapshot(self):
         """Copy commands under locks; never access PhysX from DDS callbacks."""
@@ -178,6 +190,15 @@ class UnitreeSdk2Bridge:
                 "body": (copy.deepcopy(self.low_cmd), self._received_at["body"]),
                 "left_hand": (copy.deepcopy(self.left_hand_cmd), self._received_at["left_hand"]),
                 "right_hand": (copy.deepcopy(self.right_hand_cmd), self._received_at["right_hand"]),
+            }
+
+    def command_stats(self):
+        with self.low_cmd_lock, self.left_hand_cmd_lock, self.right_hand_cmd_lock:
+            return {
+                "received": self._received_count.copy(),
+                "last_received_at": self._received_at.copy(),
+                "rejected_body_crc": self._rejected_body_crc,
+                "rejected_body_mode": self._rejected_body_mode,
             }
 
     def close(self):

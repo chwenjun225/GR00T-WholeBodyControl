@@ -11,6 +11,8 @@ from ..idl.unitree_hg.msg.dds_ import LowState_ as HGLowState_
 import ctypes
 import os
 import platform
+import sys
+from pathlib import Path
 
 class CRC(Singleton):
     def __init__(self):
@@ -29,15 +31,29 @@ class CRC(Singleton):
         self.platform = platform.system()
         self.crc_lib = None
         if self.platform == "Linux":
+            lib_name = None
             if platform.machine()=="x86_64":
-                lib_path = script_dir + '/lib/crc_amd64.so'
+                lib_name = 'crc_amd64.so'
             elif platform.machine()=="aarch64":
-                lib_path = script_dir + '/lib/crc_aarch64.so'
-            else:
-                lib_path = None
+                lib_name = 'crc_aarch64.so'
 
-            if lib_path and os.path.isfile(lib_path):
-                self.crc_lib = ctypes.CDLL(lib_path)
+            candidates = []
+            explicit_lib = os.environ.get("UNITREE_SDK2PY_CRC_LIB")
+            if explicit_lib:
+                candidates.append(Path(explicit_lib))
+            if lib_name:
+                candidates.append(Path(script_dir) / "lib" / lib_name)
+                candidates.append(
+                    Path.home() / "unitree_sdk2_python" / "unitree_sdk2py" /
+                    "utils" / "lib" / lib_name
+                )
+                candidates.extend(
+                    Path(entry) / "unitree_sdk2py" / "utils" / "lib" / lib_name
+                    for entry in sys.path if entry
+                )
+            lib_path = next((path for path in candidates if path.is_file()), None)
+            if lib_path is not None:
+                self.crc_lib = ctypes.CDLL(str(lib_path))
                 self.crc_lib.crc32_core.argtypes = (ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32)
                 self.crc_lib.crc32_core.restype = ctypes.c_uint32
     
