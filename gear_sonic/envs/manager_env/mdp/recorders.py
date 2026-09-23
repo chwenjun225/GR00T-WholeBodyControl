@@ -282,7 +282,9 @@ class TrajectoryRecorderTerm(recorder_manager.RecorderTerm):
             self._frame_data[i]["root_pos_w"].append(root_pos_rel)
 
             # Root quaternion (wxyz)
-            root_quat = robot.data.root_quat_w[i].cpu().numpy().copy()
+            from gear_sonic.isaac_utils.quaternion_compat import from_sim_quat
+
+            root_quat = from_sim_quat(robot.data.root_quat_w[i]).cpu().numpy().copy()
             self._frame_data[i]["root_quat_w"].append(root_quat)
 
             # Object state
@@ -290,7 +292,7 @@ class TrajectoryRecorderTerm(recorder_manager.RecorderTerm):
                 obj = self.env.scene["object"]
                 obj_pos = obj.data.root_pos_w[i].cpu().numpy().copy()
                 obj_pos_rel = obj_pos - env_origins[i].cpu().numpy()
-                obj_quat = obj.data.root_quat_w[i].cpu().numpy().copy()
+                obj_quat = from_sim_quat(obj.data.root_quat_w[i]).cpu().numpy().copy()
                 self._frame_data[i]["object_pos_w"].append(obj_pos_rel)
                 self._frame_data[i]["object_quat_w"].append(obj_quat)
 

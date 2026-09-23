@@ -16,7 +16,7 @@ from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
 from isaaclab.markers.config import DEFORMABLE_TARGET_MARKER_CFG
 import isaaclab.sim as sim_utils
 from isaaclab.utils import configclass
-from isaaclab.utils.math import (
+from gear_sonic.isaac_utils.quaternion_compat import (
     matrix_from_quat,
     quat_apply,
     quat_apply_yaw,
@@ -25,6 +25,8 @@ from isaaclab.utils.math import (
     quat_inv,
     quat_mul,
     sample_uniform,
+    from_sim_quat,
+    to_sim_quat,
 )
 import numpy as np
 import torch
@@ -2315,7 +2317,7 @@ class TrackingCommand(CommandTerm):
 
     @property
     def robot_body_quat_w(self) -> torch.Tensor:
-        return self.robot.data.body_quat_w[:, self.body_indexes]
+        return from_sim_quat(self.robot.data.body_quat_w[:, self.body_indexes])
 
     @property
     def robot_body_lin_vel_w(self) -> torch.Tensor:
@@ -2358,7 +2360,7 @@ class TrackingCommand(CommandTerm):
             if self.ref_motion_root_rotation_noise is not None:
                 ref_root_quat = quat_mul(ref_root_quat, self.ref_motion_root_rotation_noise)
             return ref_root_quat
-        return self.robot.data.body_quat_w[:, self.robot_anchor_body_index]
+        return from_sim_quat(self.robot.data.body_quat_w[:, self.robot_anchor_body_index])
 
     @property
     def robot_anchor_lin_vel_w(self) -> torch.Tensor:
@@ -2376,19 +2378,20 @@ class TrackingCommand(CommandTerm):
 
     @property
     def robot_vr_3point_quat_w(self) -> torch.Tensor:
-        return self.robot.data.body_quat_w[:, self.vr_3point_body_indices]
+        return from_sim_quat(self.robot.data.body_quat_w[:, self.vr_3point_body_indices])
 
     @property
     def robot_reward_point_body_pos_w(self) -> torch.Tensor:
         return self.robot.data.body_pos_w[:, self.reward_point_body_indices] + quat_apply(
-            self.robot.data.body_quat_w[:, self.reward_point_body_indices],
+            from_sim_quat(self.robot.data.body_quat_w[:, self.reward_point_body_indices]),
             self.reward_point_body_offsets,
         )
 
     @property
     def robot_vr_3point_pos_w(self) -> torch.Tensor:
         return self.robot.data.body_pos_w[:, self.vr_3point_body_indices] + quat_apply(
-            self.robot.data.body_quat_w[:, self.vr_3point_body_indices], self.vr_3point_body_offsets
+            from_sim_quat(self.robot.data.body_quat_w[:, self.vr_3point_body_indices]),
+            self.vr_3point_body_offsets,
         )
 
     @property
@@ -3071,7 +3074,7 @@ class TrackingCommand(CommandTerm):
             torch.cat(
                 [
                     root_pos[env_ids],
-                    root_ori[env_ids],
+                    to_sim_quat(root_ori[env_ids]),
                     root_lin_vel[env_ids],
                     root_ang_vel[env_ids],
                 ],
@@ -3098,7 +3101,7 @@ class TrackingCommand(CommandTerm):
                 zero_vel = torch.zeros(len(env_ids), 6, device=self.device)
                 obj.write_root_state_to_sim(
                     torch.cat(
-                        [obj_pos, self.object_root_quat[env_ids, 0], zero_vel],
+                        [obj_pos, to_sim_quat(self.object_root_quat[env_ids, 0]), zero_vel],
                         dim=-1,
                     ),
                     env_ids=env_ids,
@@ -3111,8 +3114,10 @@ class TrackingCommand(CommandTerm):
             # Move all other objects to inactive positions (far away from robot)
             # Spread objects vertically (Z-axis) - envs naturally separate in X,Y via env_origins
             inactive_base = INACTIVE_OBJECT_BASE_OFFSET.to(self.device)
-            inactive_quat = torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=self.device).expand(
-                len(env_ids), -1
+            inactive_quat = to_sim_quat(
+                torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=self.device).expand(
+                    len(env_ids), -1
+                )
             )
 
             inactive_idx = 0
@@ -3141,7 +3146,9 @@ class TrackingCommand(CommandTerm):
             # Reset with zero velocity to prevent velocity carryover between episodes
             zero_vel = torch.zeros(len(env_ids), 6, device=self.device)
             obj.write_root_state_to_sim(
-                torch.cat([obj_pos, self.object_root_quat[env_ids, 0], zero_vel], dim=-1),
+                torch.cat(
+                    [obj_pos, to_sim_quat(self.object_root_quat[env_ids, 0]), zero_vel], dim=-1
+                ),
                 env_ids=env_ids,
             )
         if "table" in self._env.scene.rigid_objects:
@@ -3191,7 +3198,7 @@ class TrackingCommand(CommandTerm):
                     )
                     table_pos = table_pos + table_offset
 
-                table_root_pose = torch.cat([table_pos, table_quat], dim=-1)
+                table_root_pose = torch.cat([table_pos, to_sim_quat(table_quat)], dim=-1)
                 table.write_root_pose_to_sim(table_root_pose, env_ids=env_ids)
 
         anchor_pos_w_repeat = self.anchor_pos_w[:, None, :].repeat(1, len(self.cfg.body_names), 1)
@@ -3249,7 +3256,7 @@ class TrackingCommand(CommandTerm):
 
         if self.cfg.use_height_map:
             root_pos_w = self.robot.data.root_pos_w
-            root_quat_w = self.robot.data.root_quat_w
+            root_quat_w = from_sim_quat(self.robot.data.root_quat_w)
 
             ray_starts_w = root_pos_w.unsqueeze(1).expand(-1, self.num_rays, -1)
             root_quat_expanded = (

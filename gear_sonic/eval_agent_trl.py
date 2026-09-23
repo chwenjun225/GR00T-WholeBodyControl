@@ -636,26 +636,6 @@ def main(override_config: omegaconf.OmegaConf):
                     results[3],
                 )  # noqa: F841
 
-                capture_path = os.environ.get("SONIC_CAPTURE_VIEWPORT")
-                if capture_path and step_count == 50:
-                    robot = env.env.scene["robot"]
-                    logger.info(
-                        "Capture root state: pos={} quat_wxyz={}",
-                        robot.data.root_pos_w[0].detach().cpu().tolist(),
-                        robot.data.root_quat_w[0].detach().cpu().tolist(),
-                    )
-                    import asyncio
-                    from omni.kit.viewport.utility import capture_viewport_to_file, get_active_viewport
-
-                    async def _capture_viewport():
-                        capture = capture_viewport_to_file(
-                            get_active_viewport(), capture_path, is_hdr=False
-                        )
-                        await capture.wait_for_result()
-                        logger.info("Captured viewport to {}", capture_path)
-
-                    asyncio.ensure_future(_capture_viewport())
-
                 if eval_step_callbacks:
                     all_want_exit = all(
                         cb.eval_step(env, results) for cb in eval_step_callbacks.values()

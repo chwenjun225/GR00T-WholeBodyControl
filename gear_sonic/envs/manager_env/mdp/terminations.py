@@ -6,7 +6,7 @@ from collections.abc import Sequence
 import re
 from typing import TYPE_CHECKING
 
-import isaaclab.utils.math as math_utils
+from gear_sonic.isaac_utils import quaternion_compat as math_utils
 import torch
 
 if TYPE_CHECKING:
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.managers import ManagerTermBase, SceneEntityCfg, TerminationTermCfg
 from isaaclab.utils import configclass
-from isaaclab.utils.math import (
+from gear_sonic.isaac_utils.quaternion_compat import (
     axis_angle_from_quat,
     quat_apply_inverse,
     quat_conjugate,
@@ -485,5 +485,4 @@ class CummBodyOriErrorLocal(_CummErrorMixin):
         body_ori_error = axis_angle_from_quat(quat_diff).norm(dim=-1)
         self.error[:] = body_ori_error.max(dim=1).values
         return self._update_counters()
-
 

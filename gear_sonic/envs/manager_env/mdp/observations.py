@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from isaaclab.utils.math import (
+from gear_sonic.isaac_utils.quaternion_compat import (
     matrix_from_quat,
     quat_apply,
     quat_apply_inverse,
@@ -13,6 +13,7 @@ from isaaclab.utils.math import (
     quat_inv,
     quat_mul,
     subtract_frame_transforms,
+    from_sim_quat,
 )
 import torch
 
@@ -2170,7 +2171,7 @@ def height_map(env: ManagerBasedEnv, command_name, random=False) -> torch.Tensor
 
     robot_root_pos_w, robot_root_quat_w = (
         command.robot.data.root_pos_w,
-        command.robot.data.root_quat_w,
+        from_sim_quat(command.robot.data.root_quat_w),
     )
     scan_dot_pos_w = command.scan_dot_pos_w
 
