@@ -113,6 +113,38 @@ def randomize_rigid_body_com(
     """
     # extract the used quantities (to enable type-hinting)
     asset: Articulation = env.scene[asset_cfg.name]
+
+    # Isaac Lab 3.x exposes simulation buffers as Warp-backed arrays. Use the
+    # public asset API and its explicit Torch view instead of operating on the
+    # low-level PhysX view, whose get_coms() no longer returns a Tensor.
+    body_com_pose = getattr(asset.data, "body_com_pose_b", None)
+    if body_com_pose is not None and hasattr(body_com_pose, "torch"):
+        if env_ids is None:
+            env_ids = torch.arange(env.scene.num_envs, device=asset.device)
+        else:
+            env_ids = env_ids.to(asset.device)
+
+        if asset_cfg.body_ids == slice(None):
+            body_ids = torch.arange(asset.num_bodies, dtype=torch.int, device=asset.device)
+        else:
+            body_ids = torch.tensor(asset_cfg.body_ids, dtype=torch.int, device=asset.device)
+
+        range_list = [com_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z"]]
+        ranges = torch.tensor(range_list, device=asset.device)
+        rand_samples = math_utils.sample_uniform(
+            ranges[:, 0], ranges[:, 1], (len(env_ids), 3), device=asset.device
+        ).unsqueeze(1)
+
+        coms = body_com_pose.torch.clone()
+        coms[env_ids[:, None], body_ids, :3] += rand_samples
+        asset.set_coms_index(
+            coms=coms[env_ids[:, None], body_ids],
+            body_ids=body_ids,
+            env_ids=env_ids,
+        )
+        return
+
+    # Isaac Lab 2.x compatibility path.
     # resolve environment ids
     if env_ids is None:
         env_ids = torch.arange(env.scene.num_envs, device="cpu")

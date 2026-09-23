@@ -31,6 +31,7 @@ except ImportError:
     sys.exit(1)
 
 import filelock  # noqa: I001
+import argparse
 import json
 import os
 import shutil
@@ -57,8 +58,18 @@ from gear_sonic.utils import config_utils, obs_utils
 
 config_utils.register_rl_resolvers()
 
+# Isaac Lab launcher arguments must be removed from sys.argv before Hydra
+# parses its overrides. This follows Isaac Lab's official train/play scripts
+# and makes flags such as ``--viz kit`` usable with this Hydra entrypoint.
+from isaaclab.app import AppLauncher  # noqa: E402
 
-@hydra.main(config_path="config", config_name="base_eval")
+_launcher_parser = argparse.ArgumentParser(description="Evaluate an RL agent with TRL.")
+AppLauncher.add_app_launcher_args(_launcher_parser)
+_args_cli, _hydra_args = _launcher_parser.parse_known_args()
+sys.argv = [sys.argv[0]] + _hydra_args  # noqa: RUF005
+
+
+@hydra.main(config_path="config", config_name="base_eval", version_base="1.3")
 def main(override_config: omegaconf.OmegaConf):
 
     hydra_log_path = os.path.join(hydra_config.HydraConfig.get().runtime.output_dir, "eval.log")
@@ -201,24 +212,7 @@ def main(override_config: omegaconf.OmegaConf):
     render_gpu_idx = _pick_display_gpu_index(default_idx=0)
 
     if simulator_type == "IsaacSim":
-        try:
-            with open("./rl/simulator/isaacsim/.isaacsim_version", encoding="utf-8") as f:
-                DEFAULT_ISAACSIM_VERSION = f.read().strip()
-        except FileNotFoundError:
-            DEFAULT_ISAACSIM_VERSION = "4.5"
-
-        if DEFAULT_ISAACSIM_VERSION == "4.5":
-            from isaaclab.app import AppLauncher
-        elif DEFAULT_ISAACSIM_VERSION == "4.2":
-            logger.warning("Using IsaacSim 4.2, replacing isaaclab with omni.isaac.lab")
-            from omni.isaac.lab.app import AppLauncher  # 4.2
-        import argparse
-
-        parser = argparse.ArgumentParser(description="Evaluate an RL agent with TRL.")
-        AppLauncher.add_app_launcher_args(parser)
-
-        args_cli, hydra_args = parser.parse_known_args()
-        sys.argv = [sys.argv[0]] + hydra_args  # noqa: RUF005
+        args_cli = _args_cli
         args_cli.num_envs = config.num_envs
         args_cli.seed = config.seed
         args_cli.env_spacing = env_config.config.env_spacing
@@ -227,6 +221,15 @@ def main(override_config: omegaconf.OmegaConf):
             "render_results", False
         ) or env_config.config.get("enable_cameras", False)
 
+        # Isaac Lab 3.x selects GUI backends through --viz. An explicit
+        # --viz selection is authoritative; otherwise translate SONIC's
+        # legacy Hydra headless setting to the new visualizer API.
+        if hasattr(args_cli, "visualizer"):
+            visualizer_explicit = getattr(args_cli, "visualizer_explicit", False)
+            if visualizer_explicit:
+                config.headless = "kit" not in (args_cli.visualizer or [])
+            else:
+                args_cli.visualizer = ["none"] if config.headless else ["kit"]
         args_cli.headless = config.headless
         args_cli.multi_gpu = config.multi_gpu
         args_cli.distributed = config.multi_gpu
@@ -632,6 +635,26 @@ def main(override_config: omegaconf.OmegaConf):
                     results[2],
                     results[3],
                 )  # noqa: F841
+
+                capture_path = os.environ.get("SONIC_CAPTURE_VIEWPORT")
+                if capture_path and step_count == 50:
+                    robot = env.env.scene["robot"]
+                    logger.info(
+                        "Capture root state: pos={} quat_wxyz={}",
+                        robot.data.root_pos_w[0].detach().cpu().tolist(),
+                        robot.data.root_quat_w[0].detach().cpu().tolist(),
+                    )
+                    import asyncio
+                    from omni.kit.viewport.utility import capture_viewport_to_file, get_active_viewport
+
+                    async def _capture_viewport():
+                        capture = capture_viewport_to_file(
+                            get_active_viewport(), capture_path, is_hdr=False
+                        )
+                        await capture.wait_for_result()
+                        logger.info("Captured viewport to {}", capture_path)
+
+                    asyncio.ensure_future(_capture_viewport())
 
                 if eval_step_callbacks:
                     all_want_exit = all(

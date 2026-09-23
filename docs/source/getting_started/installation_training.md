@@ -6,7 +6,10 @@ This guide walks through setting up the SONIC training environment for whole-bod
 
 - **GPU**: NVIDIA GPU with CUDA 12.x (L40 recommended)
 - **OS**: Ubuntu 22.04+
-- **Python**: 3.11 (required by Isaac Lab; sim/teleop/deploy scripts work on 3.10+)
+- **Python**: use the version required by the selected Isaac Lab/Isaac Sim
+  release. The Isaac Lab checkout pinned with Isaac Sim 6 requires Python 3.12;
+  older Isaac Lab releases may require Python 3.11. Sim/teleop/deploy scripts
+  that do not import Isaac Lab work on Python 3.10+.
 - **Isaac Lab**: 2.3+ (required for simulation environments)
 
 ## Install Isaac Lab
@@ -26,7 +29,7 @@ python -c "import isaaclab; print(isaaclab.__version__)"
 From the repository root:
 
 ```bash
-pip install -e "gear_sonic/[training]"
+pip install -e "gear_sonic[training]"
 ```
 
 This installs the training dependencies (Hydra, W&B, HuggingFace TRL, etc.)

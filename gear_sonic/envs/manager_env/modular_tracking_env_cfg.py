@@ -20,6 +20,31 @@ from gear_sonic.envs.manager_env.robots import g1, h2
 from gear_sonic.trl.utils import common
 
 
+def _get_physx_cfg(sim_cfg):
+    """Return the PhysX config across Isaac Lab 2.x and 3.x.
+
+    Isaac Lab 2.x exposes PhysX settings as ``SimulationCfg.physx``. In
+    Isaac Lab 3.x physics backends are pluggable and the equivalent settings
+    live in ``SimulationCfg.physics``, which defaults to ``None`` until the
+    simulation context is created. Environment configuration happens before
+    that context exists, so initialize the PhysX backend here when needed.
+    """
+    if hasattr(sim_cfg, "physx"):
+        return sim_cfg.physx
+
+    if hasattr(sim_cfg, "physics"):
+        if sim_cfg.physics is None:
+            from isaaclab_physx.physics import PhysxCfg
+
+            sim_cfg.physics = PhysxCfg()
+        return sim_cfg.physics
+
+    raise AttributeError(
+        "Unsupported Isaac Lab SimulationCfg: expected a 'physx' (2.x) "
+        "or 'physics' (3.x) attribute"
+    )
+
+
 def _load_opencv_params_from_usd(usd_path: str) -> dict:
     """Parse a USD file to extract OpenCV lens distortion parameters.
 
@@ -969,11 +994,12 @@ class ModularTrackingEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = config.get("sim_dt", 0.005)
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
-        self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
+        physx_cfg = _get_physx_cfg(self.sim)
+        physx_cfg.gpu_max_rigid_patch_count = 10 * 2**15
 
         # Increase collision stack size for scenes with complex collision meshes (e.g. staircases)
         gpu_collision_stack_size_exp = config.get("gpu_collision_stack_size_exp", 26)
-        self.sim.physx.gpu_collision_stack_size = 2**gpu_collision_stack_size_exp
+        physx_cfg.gpu_collision_stack_size = 2**gpu_collision_stack_size_exp
 
         # Increase PhysX GPU memory only for multi-object scenes
         # These prevent "totalAggregatePairsCapacity" errors when many objects are spawned
@@ -984,9 +1010,9 @@ class ModularTrackingEnvCfg(ManagerBasedRLEnvCfg):
         ):
             # With proper Z-spacing of initial positions, collision pairs should be minimal
             # These are moderate values that should work for 1000+ envs
-            self.sim.physx.gpu_found_lost_pairs_capacity = 2**24  # ~16M
-            self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 2**24
-            self.sim.physx.gpu_total_aggregate_pairs_capacity = 2**21  # ~2M
+            physx_cfg.gpu_found_lost_pairs_capacity = 2**24  # ~16M
+            physx_cfg.gpu_found_lost_aggregate_pairs_capacity = 2**24
+            physx_cfg.gpu_total_aggregate_pairs_capacity = 2**21  # ~2M
 
         # Viewer settings
         viewer_config = config.get("viewer", {})

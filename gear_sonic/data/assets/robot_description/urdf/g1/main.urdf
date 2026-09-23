@@ -14,7 +14,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/pelvis.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/pelvis.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -36,7 +36,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/pelvis_contour_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/pelvis_contour_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -59,7 +59,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hip_pitch_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hip_pitch_link.STL" />
             </geometry>
             <material name="dark">
                 <color rgba="0.2 0.2 0.2 1" />
@@ -83,7 +83,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hip_roll_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hip_roll_link.STL" />
             </geometry>
             <material name="white">
                 <color rgba="0.7 0.7 0.7 1" />
@@ -113,7 +113,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hip_yaw_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hip_yaw_link.STL" />
             </geometry>
             <material name="white">
                 <color rgba="0.7 0.7 0.7 1" />
@@ -137,7 +137,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_knee_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_knee_link.STL" />
             </geometry>
             <material name="white">
                 <color rgba="0.7 0.7 0.7 1" />
@@ -166,7 +166,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_ankle_pitch_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_ankle_pitch_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -190,7 +190,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_ankle_roll_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_ankle_roll_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -256,7 +256,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_hip_pitch_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hip_pitch_link.STL" />
             </geometry>
             <material name="dark">
                 <color rgba="0.2 0.2 0.2 1" />
@@ -280,7 +280,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_hip_roll_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hip_roll_link.STL" />
             </geometry>
             <material name="white">
                 <color rgba="0.7 0.7 0.7 1" />
@@ -310,7 +310,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_hip_yaw_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hip_yaw_link.STL" />
             </geometry>
             <material name="white">
                 <color rgba="0.7 0.7 0.7 1" />
@@ -334,7 +334,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_knee_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_knee_link.STL" />
             </geometry>
             <material name="white">
                 <color rgba="0.7 0.7 0.7 1" />
@@ -363,7 +363,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_ankle_pitch_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_ankle_pitch_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -387,7 +387,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_ankle_roll_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_ankle_roll_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -456,7 +456,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/waist_yaw_link_rev_1_0.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/waist_yaw_link_rev_1_0.STL" />
             </geometry>
             <material name="white">
                 <color rgba="0.7 0.7 0.7 1" />
@@ -479,7 +479,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/waist_roll_link_rev_1_0.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/waist_roll_link_rev_1_0.STL" />
             </geometry>
             <material name="white">
                 <color rgba="0.7 0.7 0.7 1" />
@@ -503,7 +503,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/torso_link_rev_1_0.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/torso_link_rev_1_0.STL" />
             </geometry>
             <material name="white">
                 <color rgba="0.7 0.7 0.7 1" />
@@ -557,7 +557,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/logo_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/logo_link.STL" />
             </geometry>
             <material name="dark">
                 <color rgba="0.2 0.2 0.2 1" />
@@ -577,7 +577,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/head_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/head_link.STL" />
             </geometry>
             <material name="dark">
                 <color rgba="0.2 0.2 0.2 1" />
@@ -626,7 +626,7 @@
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
                 <mesh
-                    filename="package://robot_description/meshes/g1/left_shoulder_pitch_link.STL" />
+                    filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_shoulder_pitch_link.STL" />
             </geometry>
             <material name="white">
                 <color rgba="0.7 0.7 0.7 1" />
@@ -650,7 +650,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_shoulder_roll_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_shoulder_roll_link.STL" />
             </geometry>
             <material name="white">
                 <color rgba="0.7 0.7 0.7 1" />
@@ -674,7 +674,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_shoulder_yaw_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_shoulder_yaw_link.STL" />
             </geometry>
             <material name="white">
                 <color rgba="0.7 0.7 0.7 1" />
@@ -704,7 +704,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_elbow_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_elbow_link.STL" />
             </geometry>
             <material name="white">
                 <color rgba="0.7 0.7 0.7 1" />
@@ -742,7 +742,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_wrist_roll_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_wrist_roll_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -767,7 +767,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_wrist_pitch_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_wrist_pitch_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -792,7 +792,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_wrist_yaw_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_wrist_yaw_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -801,7 +801,7 @@
         <collision>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_wrist_yaw_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_wrist_yaw_link.STL" />
             </geometry>
         </collision>
     </link>
@@ -819,13 +819,13 @@
         </inertial>
         <collision>
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hand_palm_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hand_palm_link.STL" />
             </geometry>
         </collision>
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hand_palm_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hand_palm_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -850,7 +850,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hand_thumb_0_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hand_thumb_0_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -858,7 +858,7 @@
         </visual>
         <collision>
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hand_thumb_0_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hand_thumb_0_link.STL" />
             </geometry>
         </collision>
 
@@ -880,7 +880,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hand_thumb_1_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hand_thumb_1_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -888,7 +888,7 @@
         </visual>
         <collision>
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hand_thumb_1_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hand_thumb_1_link.STL" />
             </geometry>
         </collision>
     </link>
@@ -909,7 +909,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hand_thumb_2_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hand_thumb_2_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -917,7 +917,7 @@
         </visual>
         <collision>
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hand_thumb_2_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hand_thumb_2_link.STL" />
             </geometry>
         </collision>
 
@@ -939,7 +939,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hand_middle_0_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hand_middle_0_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -947,7 +947,7 @@
         </visual>
         <collision>
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hand_middle_0_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hand_middle_0_link.STL" />
             </geometry>
         </collision>
 
@@ -969,7 +969,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hand_middle_1_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hand_middle_1_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -977,7 +977,7 @@
         </visual>
         <collision>
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hand_middle_1_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hand_middle_1_link.STL" />
             </geometry>
         </collision>
     </link>
@@ -998,7 +998,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hand_index_0_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hand_index_0_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -1006,7 +1006,7 @@
         </visual>
         <collision>
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hand_index_0_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hand_index_0_link.STL" />
             </geometry>
         </collision>
     </link>
@@ -1027,7 +1027,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hand_index_1_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hand_index_1_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -1035,7 +1035,7 @@
         </visual>
         <collision>
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/left_hand_index_1_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/left_hand_index_1_link.STL" />
             </geometry>
         </collision>
     </link>
@@ -1051,7 +1051,7 @@
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
                 <mesh
-                    filename="package://robot_description/meshes/g1/right_shoulder_pitch_link.STL" />
+                    filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_shoulder_pitch_link.STL" />
             </geometry>
             <material name="white">
                 <color rgba="0.7 0.7 0.7 1" />
@@ -1076,7 +1076,7 @@
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
                 <mesh
-                    filename="package://robot_description/meshes/g1/right_shoulder_roll_link.STL" />
+                    filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_shoulder_roll_link.STL" />
             </geometry>
             <material name="white">
                 <color rgba="0.7 0.7 0.7 1" />
@@ -1100,7 +1100,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_shoulder_yaw_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_shoulder_yaw_link.STL" />
             </geometry>
             <material name="white">
                 <color rgba="0.7 0.7 0.7 1" />
@@ -1130,7 +1130,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_elbow_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_elbow_link.STL" />
             </geometry>
             <material name="white">
                 <color rgba="0.7 0.7 0.7 1" />
@@ -1168,7 +1168,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_wrist_roll_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_wrist_roll_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -1193,7 +1193,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_wrist_pitch_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_wrist_pitch_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -1218,7 +1218,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_wrist_yaw_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_wrist_yaw_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -1227,7 +1227,7 @@
         <collision>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_wrist_yaw_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_wrist_yaw_link.STL" />
             </geometry>
         </collision>
     </link>
@@ -1246,7 +1246,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_hand_palm_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hand_palm_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -1254,7 +1254,7 @@
         </visual>
         <collision>
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_hand_palm_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hand_palm_link.STL" />
             </geometry>
         </collision>
 
@@ -1276,7 +1276,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_hand_thumb_0_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hand_thumb_0_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -1284,7 +1284,7 @@
         </visual>
         <collision>
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_hand_thumb_0_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hand_thumb_0_link.STL" />
             </geometry>
         </collision>
     </link>
@@ -1305,7 +1305,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_hand_thumb_1_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hand_thumb_1_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -1313,7 +1313,7 @@
         </visual>
         <collision>
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_hand_thumb_1_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hand_thumb_1_link.STL" />
             </geometry>
         </collision>
     </link>
@@ -1334,7 +1334,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_hand_thumb_2_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hand_thumb_2_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -1343,7 +1343,7 @@
         <collision>
             <geometry>
                 <mesh
-                    filename="package://robot_description/meshes/g1/right_hand_thumb_2_link.STL" />
+                    filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hand_thumb_2_link.STL" />
             </geometry>
         </collision>
     </link>
@@ -1365,7 +1365,7 @@
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
                 <mesh
-                    filename="package://robot_description/meshes/g1/right_hand_middle_0_link.STL" />
+                    filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hand_middle_0_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -1374,7 +1374,7 @@
         <collision>
             <geometry>
                 <mesh
-                    filename="package://robot_description/meshes/g1/right_hand_middle_0_link.STL" />
+                    filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hand_middle_0_link.STL" />
             </geometry>
         </collision>
     </link>
@@ -1396,7 +1396,7 @@
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
                 <mesh
-                    filename="package://robot_description/meshes/g1/right_hand_middle_1_link.STL" />
+                    filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hand_middle_1_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -1405,7 +1405,7 @@
         <collision>
             <geometry>
                 <mesh
-                    filename="package://robot_description/meshes/g1/right_hand_middle_1_link.STL" />
+                    filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hand_middle_1_link.STL" />
             </geometry>
         </collision>
 
@@ -1427,7 +1427,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_hand_index_0_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hand_index_0_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -1435,7 +1435,7 @@
         </visual>
         <collision>
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_hand_index_0_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hand_index_0_link.STL" />
             </geometry>
         </collision>
     </link>
@@ -1456,7 +1456,7 @@
         <visual>
             <origin xyz="0 0 0" rpy="0 0 0" />
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_hand_index_1_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hand_index_1_link.STL" />
             </geometry>
             <material name="black">
                 <color rgba="0.05 0.05 0.05 1" />
@@ -1464,7 +1464,7 @@
         </visual>
         <collision>
             <geometry>
-                <mesh filename="package://robot_description/meshes/g1/right_hand_index_1_link.STL" />
+                <mesh filename="/home/tuan/projects/cibo/3rd_party/GR00T-WholeBodyControl/gear_sonic/data/assets/robot_description/meshes/g1/right_hand_index_1_link.STL" />
             </geometry>
         </collision>
     </link>

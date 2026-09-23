@@ -31,6 +31,11 @@ class SimLoopConfig:
     inspect_only: bool = False
     profile: bool = False
     use_cpp_data_view: bool = True
+    startup_hold: bool = True
+    startup_hold_seconds: float = 3.25
+    startup_stable_seconds: float = 0.25
+    startup_max_position_error: float = 0.15
+    startup_max_velocity: float = 0.75
     # None means infer integrated Dex3 joints from the loaded articulation.
     with_hands: bool | None = None
     realtime: bool = True
@@ -44,7 +49,11 @@ class SimLoopConfig:
             value = getattr(self, name)
             if value is not None and (not value.startswith("/") or value == "/"):
                 raise ValueError(f"{name} must be an absolute non-root USD prim path")
-        for name in ("physics_dt", "render_fps", "video_fps", "command_timeout"):
+        for name in (
+            "physics_dt", "render_fps", "video_fps", "command_timeout",
+            "startup_hold_seconds", "startup_stable_seconds",
+            "startup_max_position_error", "startup_max_velocity",
+        ):
             value = getattr(self, name)
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be finite and positive")

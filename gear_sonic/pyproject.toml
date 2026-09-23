@@ -18,7 +18,10 @@ authors = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "numpy==1.26.4",
+    # Isaac Sim 6 / Isaac Lab 3 uses Python 3.12 and requires NumPy 2. Keep
+    # NumPy 1.26 for the older Python 3.10/3.11 simulation stack.
+    "numpy==1.26.4; python_version < '3.12'",
+    "numpy>=2,<3; python_version >= '3.12'",
     "scipy==1.15.3",
     "torch>=2.4.0",
     "joblib",

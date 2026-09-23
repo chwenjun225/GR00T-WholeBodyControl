@@ -152,7 +152,7 @@ def create_manager_env(config, device, args_cli):
     return env
 
 
-@hydra.main(config_path="config", config_name="base", version_base="1.1")
+@hydra.main(config_path="config", config_name="base", version_base="1.3")
 def main(config: OmegaConf):
     simulator_type = "IsaacSim"
     env_config = config.manager_env
@@ -261,6 +261,11 @@ def main(config: OmegaConf):
             or env_config.config.get("overview_camera", False)
         )
         args_cli.headless = config.headless
+        # Isaac Lab 3.x selects GUI backends through --viz instead of the
+        # legacy headless=False flag. Keep the old flag for 2.x and provide
+        # explicit visualizer intent when the new launcher API is available.
+        if hasattr(args_cli, "visualizer"):
+            args_cli.visualizer = ["none"] if config.headless else ["kit"]
         args_cli.multi_gpu = config.multi_gpu
         args_cli.distributed = config.multi_gpu
         args_cli.device = device

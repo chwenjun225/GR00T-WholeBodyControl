@@ -12,7 +12,8 @@ from unittest.mock import Mock, patch
 import numpy as np
 
 from gear_sonic.utils.isaacsim_simulator.control import (
-    command_torques, joint_groups, map_joints, world_to_body,
+    command_torques, elastic_band_wrench, joint_groups, map_joints,
+    startup_command_is_stable, world_to_body,
 )
 from gear_sonic.utils.isaacsim_simulator.profiling import TimingProfiler
 from gear_sonic.utils.isaacsim_simulator.state_reader import CppStateReader
@@ -113,6 +114,26 @@ class ControlTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             world_to_body([0, 0, 0, 0], [0, 0, 1])
 
+    def test_elastic_band_wrench_holds_authored_pose(self):
+        force, torque = elastic_band_wrench(
+            [1, 2, 3], [1, 0, 0, 0], [0, 0, -1], [0, 0, 2],
+            [1, 2, 3], [1, 0, 0, 0],
+        )
+        np.testing.assert_allclose(force, [0, 0, 1000])
+        np.testing.assert_allclose(torque, [0, 0, -20])
+
+    def test_startup_release_requires_enabled_finite_pd_command(self):
+        motors = [motor(q=0.1, kp=10, kd=1) for _ in range(2)]
+        for item in motors:
+            item.mode = 1
+        self.assertTrue(startup_command_is_stable(
+            motors, np.zeros(2), np.zeros(2), 0.15, 0.75
+        ))
+        motors[0].mode = 0
+        self.assertFalse(startup_command_is_stable(
+            motors, np.zeros(2), np.zeros(2), 0.15, 0.75
+        ))
+
     def test_cli_validation_without_kit(self):
         with tempfile.NamedTemporaryFile(suffix=".usd") as scene:
             cfg = parse_args(["--usd-path", scene.name, "--robot-path", "/World/G1", "--inspect"])
@@ -134,6 +155,10 @@ class ControlTests(unittest.TestCase):
             self.assertFalse(parse_args([
                 "--usd-path", scene.name, "--legacy-state-reader"
             ]).use_cpp_data_view)
+            self.assertTrue(cfg.startup_hold)
+            self.assertFalse(parse_args([
+                "--usd-path", scene.name, "--no-startup-hold"
+            ]).startup_hold)
             inspect_only = parse_args(["--usd-path", scene.name, "--inspect-only"])
             self.assertTrue(inspect_only.inspect_only)
             self.assertFalse(inspect_only.inspect)
@@ -246,7 +271,11 @@ class LoopTests(unittest.TestCase):
         sim.config = types.SimpleNamespace(inspect=False, inspect_only=False,
                                           with_hands=True, physics_dt=.002,
                                           render_every=10, command_timeout=.5,
-                                          headless=True, realtime=False)
+                                          headless=True, realtime=False,
+                                          startup_hold_seconds=3.25,
+                                          startup_stable_seconds=.25,
+                                          startup_max_position_error=.15,
+                                          startup_max_velocity=.75)
         sim.app = Mock()
         sim.app.is_running.side_effect = [True, False]
         sim.timeline = Mock()
@@ -262,6 +291,12 @@ class LoopTests(unittest.TestCase):
         sim._video_recorder = None
         sim._profiler = None
         sim._profiling_active = False
+        sim._startup_hold_enabled = False
+        sim._startup_command_started_at = None
+        sim._startup_last_report_at = None
+        sim._startup_stable_frames = 0
+        sim._startup_required_stable_frames = 1
+        sim._apply_startup_hold = Mock()
         return sim
 
     def test_video_capture_uses_simulation_time_without_catchup(self):
@@ -313,6 +348,7 @@ class LoopTests(unittest.TestCase):
     def test_valid_command_switches_to_effort_and_steps_once(self):
         import time
         sim = self.make_sim()
+        sim.timeline.is_playing.side_effect = [False, True]
         sim.config.realtime = False
         sim.step_count = 0
         sim.indices = {"body": np.array([0])}
@@ -334,6 +370,8 @@ class LoopTests(unittest.TestCase):
         }), patch("gear_sonic.utils.isaacsim_simulator.simulator_factory.init_channel"):
             sim.start()
         np.testing.assert_allclose(sim.robot.set_dof_efforts.call_args.args[0], [[2.]])
+        sim.timeline.play.assert_called_once_with()
+        sim._RenderingManager.render.assert_called_once_with()
         sim._SimulationManager.step.assert_called_once_with()
         self.assertEqual(sim.step_count, 1)
 

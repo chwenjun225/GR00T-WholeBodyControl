@@ -8,8 +8,10 @@ import numpy as np
 import yaml  # type: ignore
 
 from .control import command_torques
+from .control import elastic_band_wrench
 from .control import joint_groups
 from .control import map_joints
+from .control import startup_command_is_stable
 from .control import world_to_body
 from .profiling import TimingProfiler
 from .state_reader import CppStateReader
@@ -119,9 +121,12 @@ class BaseSimulator:
         # ===== TENSOR VIEWS: Isaac Sim 6.0.1 experimental prim API =====
         # setup_simulation owns the global PhysX/tensor lifecycle. Experimental
         # prim wrappers do not use the legacy initialize()/reset() methods
-        SimulationManager.setup_simulation(dt=config.physics_dt, device="cpu")
+        SimulationManager.setup_simulation(dt=config.physics_dt, device="cuda:0")
         self.physics_scene = PhysicsScene(scene_prim)
         self.physics_scene.set_dt(config.physics_dt)
+        self._gravity_world = _numpy(self.physics_scene.get_gravity()).astype(np.float64)
+        if self._gravity_world.shape != (3,) or not np.isfinite(self._gravity_world).all():
+            raise RuntimeError(f"Invalid PhysicsScene gravity: {self._gravity_world}")
         gui_render_fps = (1.0 / (config.physics_dt * config.render_every)
                           if not config.headless else 0.0)
         target_render_fps = max(
@@ -145,10 +150,34 @@ class BaseSimulator:
         # by one batched C++ data-view update.
         self.rigid_bodies = RigidPrim([base_path, torso_path])
 
+        # Match MuJoCo's ElasticBand startup behavior without changing the
+        # articulation topology. The target is the authored pelvis pose so a
+        # relocated robot is not pulled toward the world origin.
+        initial_positions, initial_orientations = self.rigid_bodies.get_world_poses()
+        self._startup_target_position = _numpy(initial_positions)[0].astype(np.float64)
+        self._startup_target_orientation = _numpy(initial_orientations)[0].astype(np.float64)
+        self._startup_hold_enabled = config.startup_hold
+        self._startup_command_started_at = None
+        self._startup_last_report_at = None
+        self._startup_stable_frames = 0
+        self._startup_required_stable_frames = max(
+            1, round(config.startup_stable_seconds / config.physics_dt)
+        )
+
+        # PhysX must advance at least once before articulation tensor views can
+        # be queried. Temporarily author zero scene gravity so that mandatory
+        # bootstrap step cannot put the floating-base robot into free fall.
+        # The edit is in the anonymous session layer and is restored as soon as
+        # the root suspension can be applied.
+        self._startup_gravity_suppressed = self._startup_hold_enabled
+        if self._startup_gravity_suppressed:
+            self.physics_scene.set_gravity([0.0, 0.0, 0.0])
+
         # Playing the timeline and pumping one app update creates PhysX tensor views
         self.timeline.play()
         tensor_deadline = time.monotonic() + 10.0
         last_tensor_error = None
+        bootstrap_q = None
         while True:
             try:
                 self.app.update()
@@ -157,6 +186,15 @@ class BaseSimulator:
                     _numpy(value) for value in self.rigid_bodies.get_world_poses()
                 )
                 if q.ndim == 2 and q.shape[0] == 1:
+                    bootstrap_q = q.copy()
+                    self._apply_startup_hold()
+                    if self._startup_gravity_suppressed:
+                        self.physics_scene.set_gravity(self._gravity_world.tolist())
+                        self._startup_gravity_suppressed = False
+                        print(
+                            "[startup] Tensor views ready; restored scene gravity "
+                            "with root suspension active."
+                        )
                     break
             except Exception as exc:  # tensor view may not exist on the first frame
                 last_tensor_error = exc
@@ -180,6 +218,7 @@ class BaseSimulator:
                 # NVIDIA's prim-data PhysX tests settle the timeline for several
                 # updates before creating/reinitializing native reader views.
                 for _ in range(5):
+                    self._apply_startup_hold()
                     self.app.update()
                 q = _numpy(self.robot.get_dof_positions())
                 rigid_poses = tuple(
@@ -199,9 +238,24 @@ class BaseSimulator:
             except Exception as exc:
                 print(f"[IsaacSim] C++ state reader unavailable; using tensor getters: {exc}")
 
-        self._gravity_world = _numpy(self.physics_scene.get_gravity()).astype(np.float64)
-        if self._gravity_world.shape != (3,) or not np.isfinite(self._gravity_world).all():
-            raise RuntimeError(f"Invalid PhysicsScene gravity: {self._gravity_world}")
+        # Bootstrap updates can generate contact impulses before a controller
+        # exists. Rewind to the first valid articulation state, clear all
+        # velocities, and pause. DDS can now publish LowState without advancing
+        # physics; the timeline resumes only after a valid LowCmd is present.
+        if self._startup_hold_enabled:
+            self.robot.set_dof_positions(bootstrap_q)
+            self.robot.set_dof_velocities(np.zeros_like(bootstrap_q))
+            self.robot.set_world_poses(
+                self._startup_target_position[np.newaxis, :],
+                self._startup_target_orientation[np.newaxis, :],
+            )
+            self.robot.set_velocities(
+                np.zeros((1, 3), dtype=np.float32),
+                np.zeros((1, 3), dtype=np.float32),
+            )
+            self.timeline.pause()
+            print("[startup] Bootstrap state restored; timeline paused pending rt/lowcmd.")
+
         integrated_hands = all(
             name in self.dof_names
             for group in ("left_hand", "right_hand")
@@ -233,6 +287,72 @@ class BaseSimulator:
 
         if config.record_video:
             self._setup_video_recording()
+
+    def _apply_startup_hold(self):
+        if not self._startup_hold_enabled:
+            return
+        positions, orientations = self.rigid_bodies.get_world_poses()
+        linear, angular = self.rigid_bodies.get_velocities()
+        force, torque = elastic_band_wrench(
+            _numpy(positions)[0],
+            _numpy(orientations)[0],
+            _numpy(linear)[0],
+            _numpy(angular)[0],
+            self._startup_target_position,
+            self._startup_target_orientation,
+        )
+        self.rigid_bodies.apply_forces_and_torques_at_pos(
+            forces=force[np.newaxis, :],
+            torques=torque[np.newaxis, :],
+            indices=[0],
+        )
+
+    def _update_startup_gate(self, body_message, now, q, dq):
+        if not self._startup_hold_enabled:
+            return
+        if self._startup_command_started_at is None:
+            self._startup_command_started_at = now
+            print(
+                "[startup] Valid rt/lowcmd received; root suspension remains enabled "
+                f"for at least {self.config.startup_hold_seconds:.2f} s."
+            )
+            print("[startup] Do not press ']' until the suspension release is reported.")
+        stable = startup_command_is_stable(
+            body_message.motor_cmd,
+            q,
+            dq,
+            self.config.startup_max_position_error,
+            self.config.startup_max_velocity,
+        )
+        held_long_enough = (
+            now - self._startup_command_started_at >= self.config.startup_hold_seconds
+        )
+        self._startup_stable_frames = (
+            self._startup_stable_frames + 1 if stable and held_long_enough else 0
+        )
+        if self._startup_last_report_at is None or now - self._startup_last_report_at >= 1.0:
+            targets = np.array(
+                [motor.q for motor in body_message.motor_cmd[:len(q)]],
+                dtype=np.float64,
+            )
+            max_error = float(np.max(np.abs(targets - q)))
+            max_velocity = float(np.max(np.abs(dq)))
+            held_for = now - self._startup_command_started_at
+            print(
+                "[startup] Waiting for release: "
+                f"held={held_for:.2f}/{self.config.startup_hold_seconds:.2f}s "
+                f"max_q_error={max_error:.3f}/{self.config.startup_max_position_error:.3f}rad "
+                f"max_dq={max_velocity:.3f}/{self.config.startup_max_velocity:.3f}rad/s "
+                f"stable_frames={self._startup_stable_frames}/"
+                f"{self._startup_required_stable_frames}"
+            )
+            self._startup_last_report_at = now
+        if self._startup_stable_frames >= self._startup_required_stable_frames:
+            self._startup_hold_enabled = False
+            print(
+                "[startup] Controller stable; releasing MuJoCo-style root suspension "
+                f"after {now - self._startup_command_started_at:.2f} s."
+            )
 
     def _setup_video_recording(self):
         import omni.replicator.core as rep
@@ -406,8 +526,11 @@ class BaseSimulator:
     def start(self):
         if self.config.inspect or self.config.inspect_only:
             print("[IsaacSim] Running observation test...")
+            if not self.timeline.is_playing():
+                self.timeline.play()
 
             for i in range(10):
+                self._apply_startup_hold()
                 self._SimulationManager.step() # TODO: Đây là nghi phạm lớn thứ hai. Nếu riêng hàm này đã tốn ~8–10 ms thì bottleneck là PhysX / scene complexity, không phải Python bridge.
 
                 obs = self._observation()
@@ -478,10 +601,18 @@ class BaseSimulator:
             if now - snapshot["body"][1] > self.config.command_timeout:
                 self._zero_efforts()
                 raise TimeoutError("Body DDS command timeout; simulation stopped")
-            if not self.timeline.is_playing():
-                self._zero_efforts()
-                raise RuntimeError("Timeline paused/stopped; restart the adapter")
             if deadline is None:
+                if not self.timeline.is_playing():
+                    self.timeline.play()
+                    # Timeline commands are committed by Kit's application
+                    # update, not by SimulationManager.step(). RenderingManager
+                    # pumps that update while temporarily disabling automatic
+                    # physics, so the first controlled step remains explicit.
+                    self._RenderingManager.render()
+                    if not self.timeline.is_playing():
+                        self._zero_efforts()
+                        raise RuntimeError("Timeline did not resume after valid rt/lowcmd")
+                    print("[startup] Valid rt/lowcmd received; physics timeline resumed.")
                 deadline = now
                 report_time = now
                 report_step = self.step_count
@@ -492,9 +623,16 @@ class BaseSimulator:
                     profiler.reset()
                     self._profiling_active = True
                     compute_start_ns = time.perf_counter_ns()
+            elif not self.timeline.is_playing():
+                self._zero_efforts()
+                raise RuntimeError("Timeline paused/stopped; restart the adapter")
 
             q = self._latest_q
             dq = self._latest_dq
+            self._update_startup_gate(
+                snapshot["body"][0], now,
+                q[self.indices["body"]], dq[self.indices["body"]],
+            )
             torque_elapsed_ns = 0
             self._last_torque.fill(0.0)
             for group, indices in self.indices.items():
@@ -515,7 +653,7 @@ class BaseSimulator:
                 self._last_torque[indices] = torque
 
             # One tensor write for the complete articulation, matching MuJoCo's
-            # single mj_data.ctrl assignment instead of one API call per group.
+            # single mj_data.ctrl assignment instead of one API call per group
             started = time.perf_counter_ns() if self._profiling_active else 0
             self.robot.set_dof_efforts(self._last_torque[np.newaxis, :])
             if self._profiling_active:
@@ -523,6 +661,7 @@ class BaseSimulator:
                 profiler.add("set_effort", time.perf_counter_ns() - started)
 
             started = time.perf_counter_ns() if self._profiling_active else 0
+            self._apply_startup_hold()
             self._SimulationManager.step()
             if self._profiling_active:
                 profiler.add("physics", time.perf_counter_ns() - started)
@@ -534,9 +673,7 @@ class BaseSimulator:
                     profiler.add("render", time.perf_counter_ns() - started)
 
                 started = time.perf_counter_ns() if self._profiling_active else 0
-                captured = self._capture_video_frame(
-                    self._SimulationManager.get_simulation_time()
-                )
+                captured = self._capture_video_frame(self._SimulationManager.get_simulation_time())
                 if self._profiling_active and captured:
                     profiler.add("capture", time.perf_counter_ns() - started)
 
@@ -554,17 +691,14 @@ class BaseSimulator:
                 commands = stats["received"]["body"]
                 command_hz = (commands - report_commands) / wall_dt
                 command_at = stats["last_received_at"]["body"]
-                command_age_ms = ((report_now - command_at) * 1e3
-                                  if command_at is not None else float("inf"))
+                command_age_ms = ((report_now - command_at) * 1e3 if command_at is not None else float("inf"))
                 physics_hz = steps / wall_dt
                 mean_compute_ms = compute_time * 1e3 / max(steps, 1)
                 body_tau = self._last_torque[self.indices["body"]]
                 video_status = ""
                 if self._video_recorder is not None:
                     video = self._video_recorder.stats()
-                    video_status = (
-                        f" video={video['submitted']} dropped={video['dropped']}"
-                    )
+                    video_status = (f" video={video['submitted']} dropped={video['dropped']}")
                 print(
                     f"[control] physics={physics_hz:.1f} Hz "
                     f"rtf={physics_hz * self.config.physics_dt:.2f} "

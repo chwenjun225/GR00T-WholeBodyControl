@@ -44,6 +44,16 @@ def parse_args(argv=None) -> SimLoopConfig:
     parser.add_argument("--legacy-state-reader", action="store_false",
                         dest="use_cpp_data_view",
                         help="Use individual Python tensor getters instead of batched C++ views")
+    parser.add_argument("--no-startup-hold", action="store_false", dest="startup_hold",
+                        help="Disable the MuJoCo-style root suspension during controller startup")
+    parser.add_argument("--startup-hold-seconds", type=float, default=3.25,
+                        help="Minimum seconds of valid body commands before releasing the root")
+    parser.add_argument("--startup-stable-seconds", type=float, default=0.25,
+                        help="Continuous stable time required before releasing the root")
+    parser.add_argument("--startup-max-position-error", type=float, default=0.15,
+                        help="Maximum body joint target error in radians at release")
+    parser.add_argument("--startup-max-velocity", type=float, default=0.75,
+                        help="Maximum absolute body joint velocity in rad/s at release")
     hands = parser.add_mutually_exclusive_group()
     hands.add_argument("--with-hands", dest="with_hands", action="store_true",
                        help="Require integrated seven-DOF Dex3 hands")

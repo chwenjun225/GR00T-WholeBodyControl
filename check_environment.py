@@ -10,6 +10,7 @@ Usage:
 """
 
 import importlib
+import importlib.metadata
 import os
 import platform
 import shutil
@@ -29,12 +30,37 @@ def check_python(training=False):
     v = sys.version_info
     version_str = f"{v.major}.{v.minor}.{v.micro}"
     if training:
-        ok = v.major == 3 and v.minor == 11
+        # Isaac Lab's Python requirement follows the Isaac Sim generation.  In
+        # particular, the Isaac Lab checkout paired with Isaac Sim 6 uses
+        # Python 3.12, while older releases used Python 3.11.  Prefer the
+        # requirement published by the installed package instead of baking a
+        # release-specific version into this repository-wide checker.
+        requires_python = None
+        try:
+            requires_python = importlib.metadata.metadata("isaaclab").get("Requires-Python")
+        except importlib.metadata.PackageNotFoundError:
+            pass
+
+        if requires_python:
+            try:
+                from packaging.specifiers import SpecifierSet
+
+                ok = v.major == 3 and SpecifierSet(requires_python).contains(version_str)
+            except ImportError:
+                ok = v.major == 3 and v.minor >= 10
+        else:
+            ok = v.major == 3 and v.minor >= 10
+
+        requirement = (
+            f"Isaac Lab requires Python {requires_python}"
+            if requires_python
+            else "need Python 3.10+ supported by Isaac Lab"
+        )
         return check(
             "Python version",
             ok,
             msg_pass=version_str,
-            msg_fail=f"{version_str} (training requires 3.11.x — Isaac Lab requirement)",
+            msg_fail=f"{version_str} ({requirement})",
         )
     else:
         ok = v.major == 3 and v.minor >= 10
@@ -117,7 +143,7 @@ def check_gear_sonic():
         return check(
             "gear_sonic",
             False,
-            msg_fail="not installed (pip install -e 'gear_sonic/[training]')",
+            msg_fail="not installed (pip install -e 'gear_sonic[training]')",
         )
 
 
