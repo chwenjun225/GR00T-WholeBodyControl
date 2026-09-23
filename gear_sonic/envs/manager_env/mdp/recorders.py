@@ -117,8 +117,11 @@ class RenderEnvsRecorderTerm(recorder_manager.RecorderTerm):
             self.env.sim.render()
             self.env.sim.render()
 
-        # Mark sensor as outdated so update actually re-reads the annotator buffers
-        cam._is_outdated[:] = True  # noqa: SLF001
+        # Mark every camera instance as outdated after changing its pose.  Isaac Lab 3
+        # stores this state in a Warp array, so assigning to the old private tensor
+        # (``cam._is_outdated[:] = True``) is no longer supported.  ``reset`` is the
+        # public API for invalidating the camera buffers after pose randomization.
+        cam.reset()
         cam.update(dt=0.0, force_recompute=True)
 
         # Get RGB data

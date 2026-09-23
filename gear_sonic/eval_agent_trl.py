@@ -378,12 +378,8 @@ def main(override_config: omegaconf.OmegaConf):
     critic_backbone_kwargs = {}
     env.config["obs"]["obs_dims"]["actor_obs"] = env.env.observation_space["policy"].shape[-1]
     env.config["obs"]["obs_dims"]["critic_obs"] = env.env.observation_space["critic"].shape[-1]
-    env.config["robot"]["algo_obs_dim_dict"]["actor_obs"] = env.env.observation_space[
-        "policy"
-    ].shape[-1]
-    env.config["robot"]["algo_obs_dim_dict"]["critic_obs"] = env.env.observation_space[
-        "critic"
-    ].shape[-1]
+    env.config["robot"]["algo_obs_dim_dict"]["actor_obs"] = env.env.observation_space["policy"].shape[-1]
+    env.config["robot"]["algo_obs_dim_dict"]["critic_obs"] = env.env.observation_space["critic"].shape[-1]
     example_obs = env.reset(flatten_dict_obs=False)
     for key in env.env.observation_space:
         if key not in ["policy", "critic"]:
@@ -496,9 +492,7 @@ def main(override_config: omegaconf.OmegaConf):
 
         # Check if actor has universal-token encoder structure
         has_actor_module = hasattr(model.policy, "actor_module")
-        has_encoders = has_actor_module and hasattr(
-            model.policy.actor_module, "encoders_to_iterate"
-        )
+        has_encoders = has_actor_module and hasattr(model.policy.actor_module, "encoders_to_iterate")
 
         if "tokenizer" in example_obs_dict and has_encoders:
 
