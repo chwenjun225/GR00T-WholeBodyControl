@@ -1,25 +1,33 @@
 # Standard policy observations composition
 
+# Input cho IMU + Khớp Robot
 defaults:
-  - ../terms/gravity_dir@_here_
-  - ../terms/base_ang_vel@_here_
-  - ../terms/joint_pos@_here_
-  - ../terms/joint_vel@_here_
-  - ../terms/actions@_here_
+  - ../terms/gravity_dir@_here_ # hướng trọng lực (độ nghiêng)
+  - ../terms/base_ang_vel@_here_ # vận tốc xoay của thân
+  - ../terms/joint_pos@_here_ # góc khớp 
+  - ../terms/joint_vel@_here_ # vận tốc khớp 
+  - ../terms/actions@_here_ # lệnh bước trước 
 
 _target_: gear_sonic.envs.manager_env.mdp.observations.PolicyCfg
 enable_corruption: True
 concatenate_terms: True
 
 
-# define noise for certain terms
-gravity_dir:
-  history_length: ${actor_prop_history_length}
+# >>> Define noise for certain terms <<<
+
+# gravity_dir: Hướng trọng lực so với thân 
+#              Đến từ cảm biến IMU ở thân robot.
+#              Cho biết "cơ thể robot đang nghiêng về phía bên nào"
+gravity_dir: 
+  history_length: ${actor_prop_history_length} # =10, lấy từ sonic_release.yaml 
   noise:
     _target_: isaaclab.utils.noise.AdditiveUniformNoiseCfg
     n_min: -0.05
     n_max: 0.05
 
+# base_ang_vel: Vận tốc xoay của thân
+#               Đến từ IMU (cảm biến con quay) 
+#               Cho biến "cơ thể robot sẽ ngã với tốc độ như thế nào, nhanh hay châm"
 base_ang_vel:
   history_length: ${actor_prop_history_length}
   noise:
@@ -27,6 +35,9 @@ base_ang_vel:
     n_min: -0.2
     n_max: 0.2
 
+# joint_pos: Góc vị trí các khớp
+#            Đến từ bộ Encoder ở từng khớp 
+#            Từ vị trí góc, suy ra được tư thế hiện tại của robot
 joint_pos:
   history_length: ${actor_prop_history_length}
   noise:
@@ -34,6 +45,9 @@ joint_pos:
     n_min: -0.01
     n_max: 0.01
 
+# joint_vel: Vận tốc của các khớp 
+#            Bộ Encoder ở từng khớp 
+#            Cho biết các khớp đang chuyển động ra sao 
 joint_vel:
   history_length: ${actor_prop_history_length}
   noise:
@@ -41,5 +55,8 @@ joint_vel:
     n_min: -0.5
     n_max: 0.5
 
+# actions: Lệnh đã gửi trước đó 
+#          Đến từ bộ nhớ của policy-wholebodycontrol
+#          Cho biết policy vừa ra lệnh gì
 actions:
   history_length: ${actor_actions_history_length}

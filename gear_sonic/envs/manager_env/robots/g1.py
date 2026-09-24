@@ -7,8 +7,8 @@ import isaaclab.sim as sim_utils
 
 ASSET_DIR = "gear_sonic/data/assets"
 
-ARMATURE_5020 = 0.003609725
-ARMATURE_7520_14 = 0.010177520
+ARMATURE_5020 = 0.003609725 # quán tính rotor động cơ (loại 7520 của chân)
+ARMATURE_7520_14 = 0.010177520 # 10 Hz
 ARMATURE_7520_22 = 0.025101925
 ARMATURE_4010 = 0.00425
 
@@ -17,12 +17,41 @@ DAMPING_RATIO = 2.0
 
 STIFFNESS_5020 = ARMATURE_5020 * NATURAL_FREQ**2
 STIFFNESS_7520_14 = ARMATURE_7520_14 * NATURAL_FREQ**2
-STIFFNESS_7520_22 = ARMATURE_7520_22 * NATURAL_FREQ**2
-STIFFNESS_4010 = ARMATURE_4010 * NATURAL_FREQ**2
+STIFFNESS_7520_22 = ARMATURE_7520_22 * NATURAL_FREQ**2 # Kp 
+STIFFNESS_4010 = ARMATURE_4010 * NATURAL_FREQ**2 
 
 DAMPING_5020 = 2.0 * DAMPING_RATIO * ARMATURE_5020 * NATURAL_FREQ
 DAMPING_7520_14 = 2.0 * DAMPING_RATIO * ARMATURE_7520_14 * NATURAL_FREQ
-DAMPING_7520_22 = 2.0 * DAMPING_RATIO * ARMATURE_7520_22 * NATURAL_FREQ
+DAMPING_7520_22 = 2.0 * DAMPING_RATIO * ARMATURE_7520_22 * NATURAL_FREQ # Kd 
+
+"""
+Công thức PD cho mỗi khớp là:
+mô-men = Kp * (góc_mục_tiêu - góc_hiện_tại) - Kd * vận_tốc_khớp
+          └── lò xo kéo về mục tiêu ──┘      └─ giảm chấn chống rung ─┘
+
+Lưu ý: Kp và Kd không được chọn tùy tiện. Chúng được tính từ quán tính 
+thật của từng loại động cơ Unitree (5020, 7520, 4010) sao cho 
+mỗi khớp phản ứng như một lò xo có tần số riêng 10 Hz và hệ số 
+giảm chấn 2.0 (hơi "đặc", không nảy).
+
+Gán vào từng nhóm khớp: g1.py:239-360, ví dụ nhóm chân:
+
+"legs": ImplicitActuatorCfg(
+    joint_names_expr=[".*_hip_yaw_joint", ".*_hip_roll_joint", ".*_hip_pitch_joint", ".*_knee_joint"],
+    effort_limit_sim={".*_hip_pitch_joint": 139.0, ...},  # mô-men tối đa (N·m)
+    stiffness={".*_hip_pitch_joint": STIFFNESS_7520_22, ...},
+    damping={".*_hip_pitch_joint": DAMPING_7520_22, ...},
+),
+
+Có 5 nhóm: legs, feet (mắt cá), waist, waist_yaw, arms.
+
+Theo docstring của Isaac Lab (IsaacLab/source/isaaclab/isaaclab/actuators/actuator_pd.py:36), 
+công thức PD được chính bộ giải vật lý PhysX tính bên trong mỗi bước mô phỏng, chứ không phải 
+code Python. Vì vậy bạn sẽ không tìm thấy dòng torque = Kp * ... nào trong SONIC. Trên robot 
+thật, phần này do firmware động cơ Unitree đảm nhận, với cùng Kp và Kd.
+
+"""
+
 DAMPING_4010 = 2.0 * DAMPING_RATIO * ARMATURE_4010 * NATURAL_FREQ
 
 G1_ISAACLAB_JOINTS = [
@@ -368,4 +397,11 @@ for a in G1_CYLINDER_MODEL_12_DEX_CFG.actuators.values():
         s = dict.fromkeys(names, s)
     for n in names:
         if n in e and n in s and s[n]:
-            G1_MODEL_12_ACTION_SCALE[n] = 0.25 * e[n] / s[n]
+            G1_MODEL_12_ACTION_SCALE[n] = 0.25 * e[n] / s[n] # e = mô-men tối đa, s = độ cứng
+            # Ý nghĩa: khi action = 1, khớp bị lệch khỏi mục 
+            # tiêu một góc vừa đủ để PD tạo ra 1/4 mô-men tối 
+            # đa của động cơ đó. Nhờ vậy khớp chân khỏe và 
+            # khớp cổ tay yếu có cùng "thang đo" đối với 
+            # policy. Scale này được gắn vào môi trường 
+            # ở modular_tracking_env_cfg.py:1040:
+

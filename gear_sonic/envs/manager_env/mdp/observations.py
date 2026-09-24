@@ -777,7 +777,9 @@ def motion_anchor_gravity_dir(env: ManagerBasedEnv, command_name: str) -> torch.
 
 
 def gravity_dir(env: ManagerBasedEnv, command_name: str) -> torch.Tensor:
-    """Compute gravity direction in the robot anchor (pelvis) frame.
+    """
+    Hàm tính độ nghiêng.
+    Compute gravity direction in the robot anchor (pelvis) frame.
 
     Transforms the world-frame down vector into the robot's local frame.
     Provides the policy with tilt/orientation information.
@@ -788,6 +790,12 @@ def gravity_dir(env: ManagerBasedEnv, command_name: str) -> torch.Tensor:
     command: commands.TrackingCommand = env.command_manager.get_term(command_name)
     gravity_dir = quat_apply(quat_inv(command.robot_anchor_quat_w), command.down_dir)
     return gravity_dir
+# robot_anchor_quat_w là hướng xoay của khung xương chậu (pelvis) trong không gian, biểu diễn bằng quaternion
+# down_dir là vector "hướng xuống mặt đất" (0, 0, -1)
+# quat_inv(...) rồi quat_apply(...) nghĩa là xoay vector "xuống mặt đất" vào hệ tọa độ của thân robot
+# Robot đứng thẳng thì kết quả ≈ (0, 0, -1)
+# Robot nghiêng về trước thì vector lệch sang trục x
+# Như vậy 3 con số này cho robot biết nó đang nghiêng về đâu và nghiêng bao nhiêu
 
 
 def robot_anchor_lin_vel_w(env: ManagerBasedEnv, command_name: str) -> torch.Tensor:

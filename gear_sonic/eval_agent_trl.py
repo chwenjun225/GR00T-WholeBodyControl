@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 # Copyright 2025 The HuggingFace Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,37 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-def request_cosmos3_action(
-    instruction, state, images, server_url="http://127.0.0.1:8001", timeout=120.0
-):
-    """Request a G1 action chunk without replacing the SONIC evaluation loop.
-
-    Args:
-        instruction: Task text.
-        state: 28 joint positions (radians), in the server's /healthz joint order.
-        images: uint8 HWC RGB arrays/tensors keyed by cam_left_high and
-            cam_right_high, optionally cam_left_wrist and cam_right_wrist.
-        server_url: The existing Cosmos3 G1 HTTP server.
-        timeout: Request timeout in seconds.
-
-    Returns:
-        A float32 NumPy array [32, 28] of absolute joint-position targets.
-        These are not SONIC tokens or the normalized actions accepted by
-        env.step(). Applying them requires an explicit reference adapter.
-
-    No model/controller process is started. The caller decides when to request
-    and how to use the returned targets; the existing rollout remains unchanged.
-    """
-    from pathlib import Path
-    import sys
-
-    workspace = str(Path(__file__).resolve().parents[3])
-    if workspace not in sys.path:
-        sys.path.insert(0, workspace)
-    from cibo.integrations.cosmos3_client import request_action
-
-    return request_action(server_url, instruction, state, images, timeout=timeout)
 
 try:
     import isaaclab  # noqa: F401
@@ -118,6 +88,7 @@ def main(override_config: omegaconf.OmegaConf):
 
     os.chdir(hydra.utils.get_original_cwd())
 
+    # Get config
     if override_config.checkpoint is not None:
         has_config = True
         checkpoint = Path(override_config.checkpoint)

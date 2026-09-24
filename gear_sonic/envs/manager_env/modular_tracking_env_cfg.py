@@ -991,7 +991,7 @@ class ModularTrackingEnvCfg(ManagerBasedRLEnvCfg):
         self.episode_length_s = config.get("episode_length_s", 10.0)
 
         # Simulation settings
-        self.sim.dt = config.get("sim_dt", 0.005)
+        self.sim.dt = config.get("sim_dt", 0.005)  # 1 bước vật lý = 5 ms = 200 Hz
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
         physx_cfg = _get_physx_cfg(self.sim)
