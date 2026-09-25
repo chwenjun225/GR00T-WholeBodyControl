@@ -379,6 +379,20 @@ class MySceneCfg(InteractiveSceneCfg):
         else:
             raise ValueError(f"Unknown terrain type: {terrain_type}")
 
+        # optional static USD scene (e.g. a warehouse), spawned once and shared by all envs
+        scene_usd_path = config.get("scene_usd_path", None)
+        if scene_usd_path:
+            if not os.path.isfile(scene_usd_path):
+                raise FileNotFoundError(f"scene_usd_path does not exist: {scene_usd_path}")
+            self.static_scene = AssetBaseCfg(
+                prim_path="/World/StaticScene",
+                spawn=sim_utils.UsdFileCfg(usd_path=os.path.abspath(scene_usd_path)),
+                init_state=AssetBaseCfg.InitialStateCfg(
+                    pos=tuple(config.get("scene_usd_pos", (0.0, 0.0, 0.0)))
+                ),
+                collision_group=-1,
+            )
+
         # robots
         self.robot: ArticulationCfg = dataclasses.MISSING
 

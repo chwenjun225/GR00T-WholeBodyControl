@@ -148,6 +148,10 @@ def create_manager_env(config, device, args_cli):
         cfg=env_instance_cfg, render_mode="rgb_array" if not args_cli.headless else None
     )
 
+    # remove the ground plane (visual and collision) when a static scene provides its own floor
+    if env_instance_cfg.config.get("scene_disable_ground", False):
+        env.scene.stage.GetPrimAtPath("/World/ground/terrain").SetActive(False)
+
     env = ManagerEnvWrapper(env, env_instance_cfg.config)
     return env
 

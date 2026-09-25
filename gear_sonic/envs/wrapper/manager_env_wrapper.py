@@ -1093,7 +1093,7 @@ class ManagerEnvWrapper:
 
     def setup_keyboard(self):
         try:
-            from isaaclab.devices.keyboard.se2_keyboard import Se2Keyboard, Se2KeyboardCfg
+            from isaaclab.devices.keyboard import Se2Keyboard, Se2KeyboardCfg
 
             cfg = Se2KeyboardCfg()
             self.keyboard_interface = Se2Keyboard(cfg)
@@ -1711,7 +1711,7 @@ class ManagerEnvWrapper:
         """Setup keyboard controls for replay mode"""  # noqa: D415
         try:
             if not hasattr(self, "keyboard_interface"):
-                from isaaclab.devices.keyboard.se2_keyboard import Se2Keyboard, Se2KeyboardCfg
+                from isaaclab.devices.keyboard import Se2Keyboard, Se2KeyboardCfg
 
                 cfg = Se2KeyboardCfg()
                 self.keyboard_interface = Se2Keyboard(cfg)
