@@ -405,3 +405,14 @@ for a in G1_CYLINDER_MODEL_12_DEX_CFG.actuators.values():
             # policy. Scale này được gắn vào môi trường 
             # ở modular_tracking_env_cfg.py:1040:
 
+
+# Dex3 finger drives, taken from Unitree's Isaac Lab G1 + Dex3 config
+# (unitree_sim_isaaclab/robots/unitree.py, "hands" actuator).
+G1_DEX3_HAND_ACTUATOR = ImplicitActuatorCfg(
+    joint_names_expr=[".*_hand_index_.*_joint", ".*_hand_middle_.*_joint", ".*_hand_thumb_.*_joint"],
+    effort_limit_sim=300.0,
+    velocity_limit_sim=100.0,
+    stiffness=100.0,
+    damping=10.0,
+    armature=0.1,
+)

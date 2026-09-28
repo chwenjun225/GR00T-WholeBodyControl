@@ -393,6 +393,38 @@ class MySceneCfg(InteractiveSceneCfg):
                 collision_group=-1,
             )
 
+        # optional robot-mounted cameras for an external policy, listed in a YAML file:
+        # cameras: [{name, parent_link, pos, rot_xyzw, convention, width, height,
+        #            focal_length, horizontal_aperture}, ...]
+        policy_cameras_file = config.get("policy_cameras_file", None)
+        if policy_cameras_file:
+            import yaml
+
+            with open(policy_cameras_file) as f:
+                cameras = yaml.safe_load(f)["cameras"]
+            for cam in cameras:
+                setattr(
+                    self,
+                    cam["name"],
+                    CameraCfg(
+                        prim_path=f"{{ENV_REGEX_NS}}/Robot/{cam['parent_link']}/{cam['name']}",
+                        update_period=config.get("policy_cameras_update_period", 0.0),
+                        width=cam["width"],
+                        height=cam["height"],
+                        data_types=["rgb"],
+                        spawn=sim_utils.PinholeCameraCfg(
+                            focal_length=cam["focal_length"],
+                            horizontal_aperture=cam["horizontal_aperture"],
+                            clipping_range=(0.01, 100.0),
+                        ),
+                        offset=CameraCfg.OffsetCfg(
+                            pos=tuple(cam["pos"]),
+                            rot=tuple(cam["rot_xyzw"]),
+                            convention=cam["convention"],
+                        ),
+                    ),
+                )
+
         # robots
         self.robot: ArticulationCfg = dataclasses.MISSING
 
@@ -998,6 +1030,39 @@ class ModularTrackingEnvCfg(ManagerBasedRLEnvCfg):
         self.curriculum = common.custom_instantiate(curriculum, _recursive=True)
         self.recorders = common.custom_instantiate(recorders, _recursive=True)
 
+    def _enable_dex3_hands(self, urdf_path: str):
+        """Spawn a URDF whose Dex3 fingers are revolute and keep the policy's 29-DOF body interface.
+
+        Fingers get their own PD drive and hold their targets; the joint-position action and the
+        joint observations are restricted to the body joints in SONIC's order.
+        """
+        from isaaclab.managers import SceneEntityCfg
+
+        from gear_sonic.envs.env_utils.joint_utils import G1_ISAACLab_ORDER
+
+        if not os.path.isfile(urdf_path):
+            raise FileNotFoundError(f"dex3_urdf_path does not exist: {urdf_path}")
+        robot = self.scene.robot
+        self.scene.robot = robot.replace(
+            spawn=robot.spawn.replace(asset_path=urdf_path),
+            actuators={**robot.actuators, "dex3_hands": g1.G1_DEX3_HAND_ACTUATOR},
+        )
+
+        # motion data covers the 29 body joints; the fingers are reset to their defaults
+        self.commands.motion.motion_lib_num_dof = len(G1_ISAACLab_ORDER)
+
+        self.actions.joint_pos.joint_names = list(G1_ISAACLab_ORDER)
+        self.actions.joint_pos.preserve_order = True
+        body = SceneEntityCfg("robot", joint_names=list(G1_ISAACLab_ORDER), preserve_order=True)
+        for group in vars(self.observations).values():
+            for term_name in ("joint_pos", "joint_vel"):
+                term = getattr(group, term_name, None)
+                if term is None:
+                    continue
+                func_name = term.func if isinstance(term.func, str) else term.func.__name__
+                if func_name.split(":")[-1] in ("joint_pos_rel", "joint_vel_rel"):
+                    term.params["asset_cfg"] = body
+
     def override_settings(self):
         config = self.config
         # General settings
@@ -1058,6 +1123,11 @@ class ModularTrackingEnvCfg(ManagerBasedRLEnvCfg):
         self.isaaclab_to_mujoco_mapping = robot_mapping[config["robot"].get("type", "g1")][
             "isaaclab_to_mujoco_mapping"
         ]
+
+        # optional G1 URDF with actuated Dex3 fingers; the policy still drives only the 29 body joints
+        dex3_urdf_path = config["robot"].get("dex3_urdf_path", None)
+        if dex3_urdf_path:
+            self._enable_dex3_hands(os.path.abspath(dex3_urdf_path))
 
         # curriculum? WARNING HARDCODED
         import importlib
