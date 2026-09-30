@@ -409,6 +409,8 @@ class MySceneCfg(InteractiveSceneCfg):
                     CameraCfg(
                         prim_path=f"{{ENV_REGEX_NS}}/Robot/{cam['parent_link']}/{cam['name']}",
                         update_period=config.get("policy_cameras_update_period", 0.0),
+                        # keep data.pos_w / quat_w_* following the moving links (default: init pose)
+                        update_latest_camera_pose=True,
                         width=cam["width"],
                         height=cam["height"],
                         data_types=["rgb"],
